@@ -81,9 +81,17 @@ app.use((err, req, res, _next) => {
 // ─── Старт ────────────────────────────────────────────────────
 async function start() {
   await migrate();
-  app.listen(config.admin.port, () => {
-    logger.info(`[web] Admin panel → http://localhost:${config.admin.port}`);
+
+  const PORT = process.env.PORT || config.admin.port || 3000;
+
+  app.listen(PORT, '0.0.0.0', () => {
+    logger.info(`[web] Admin panel listening on port ${PORT}`);
   });
 }
 
-start
+start().catch((e) => {
+  logger.error('[web] Fatal: ' + e.message);
+  process.exit(1);
+});
+
+module.exports = app;
