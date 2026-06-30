@@ -140,12 +140,16 @@
           <label>Telegram клиента</label>
           <input type="text" name="notify_client_telegram" value="<%= vr.notify_client_telegram || '' %>" placeholder="-100xxxxxxx">
         </div>
-        <div class="form-group" style="justify-content:flex-end">
-          <label>&nbsp;</label>
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:var(--text)">
-            <input type="checkbox" name="work_night" style="width:auto" <%= vr.work_night ? 'checked' : '' %>>
-            Проверять ночью
-          </label>
+        <div class="form-group">
+          <label for="work_night_cb">Ночные проверки</label>
+          <div style="display:flex;align-items:center;gap:8px;padding-top:4px">
+            <input type="checkbox" id="work_night_cb" name="work_night" value="on"
+              style="width:16px;height:16px;padding:0;border:none;background:transparent;cursor:pointer;accent-color:var(--accent);flex-shrink:0"
+              <%= vr.work_night ? 'checked' : '' %>>
+            <label for="work_night_cb" style="cursor:pointer;font-size:13px;color:var(--text);font-weight:400;margin:0">
+              Проверять ночью (23–07 МСК)
+            </label>
+          </div>
         </div>
       </div>
       <div class="form-actions" style="margin-top:14px">
@@ -237,16 +241,4 @@
             <td><%= n.channel %></td>
             <td><span class="badge badge-<%= n.status %>"><%= n.status %></span></td>
             <td class="meta"><%= fmt.dt(n.sent_at) %></td>
-            <td class="meta" style="max-width:300px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-              <%= n.message ? n.message.slice(0,80) : '—' %>
-            </td>
-          </tr>
-        <% }) %>
-      </tbody>
-    </table>
-  <% } %>
-</div>
-
-<style>
-.hidden { display: none !important; }
-</style>
+            <td class
