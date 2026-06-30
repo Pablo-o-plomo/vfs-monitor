@@ -1,0 +1,59 @@
+<% title = 'Дашборд' %>
+
+<div class="stats-grid">
+  <div class="stat-card blue">
+    <div class="stat-label">Клиентов</div>
+    <div class="stat-value"><%= stats.clients %></div>
+  </div>
+  <div class="stat-card green">
+    <div class="stat-label">Активных заявок</div>
+    <div class="stat-value"><%= stats.active %></div>
+  </div>
+  <div class="stat-card yellow">
+    <div class="stat-label">Слотов за 24 ч</div>
+    <div class="stat-value"><%= stats.slots24h %></div>
+  </div>
+  <div class="stat-card purple">
+    <div class="stat-label">Ждут проверки</div>
+    <div class="stat-value"><%= stats.pending %></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    🕐 Последние найденные слоты
+  </div>
+  <% if (recentSlots.length === 0) { %>
+    <div class="empty">
+      <div class="empty-icon">🔍</div>
+      Слоты ещё не найдены. Worker начнёт проверки когда появятся активные заявки.
+    </div>
+  <% } else { %>
+    <table>
+      <thead>
+        <tr>
+          <th>Дата слота</th>
+          <th>Время</th>
+          <th>Клиент</th>
+          <th>Страна / Центр</th>
+          <th>Категория</th>
+          <th>Найден</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% recentSlots.forEach(s => { %>
+          <tr>
+            <td><b><%= s.slot_date %></b></td>
+            <td><%= s.slot_time || '—' %></td>
+            <td>
+              <a href="/requests/<%= s.request_id %>" class="link"><%= s.client_name %></a>
+            </td>
+            <td><%= s.country_name %> / <%= s.center %></td>
+            <td class="meta"><%= s.category %> / <%= s.subcategory %></td>
+            <td class="meta"><%= new Date(s.found_at).toLocaleString('ru-RU') %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>

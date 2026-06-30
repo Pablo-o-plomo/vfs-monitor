@@ -1,0 +1,120 @@
+<% title = 'Новая заявка — ' + client.name %>
+
+<div style="max-width:640px">
+  <div class="meta" style="margin-bottom:16px">
+    <a href="/clients/<%= client.id %>" class="link">← <%= client.name %></a>
+  </div>
+
+  <% if (error) { %>
+    <div class="alert alert-error">⚠ <%= error %></div>
+  <% } %>
+
+  <div class="card">
+    <div class="card-header">Параметры мониторинга</div>
+    <div style="padding:24px">
+      <form action="/clients/<%= client.id %>/requests" method="POST">
+        <div class="form-grid">
+
+          <div class="form-group">
+            <label>Страна *</label>
+            <select name="country_code" id="countryCode">
+              <% countries.forEach(c => { %>
+                <option value="<%= c.code %>"
+                  <%= (values.country_code || 'hun') === c.code ? 'selected' : '' %>>
+                  <%= c.name %>
+                </option>
+              <% }) %>
+            </select>
+            <input type="hidden" name="country_name" id="countryName" value="">
+          </div>
+
+          <div class="form-group">
+            <label>Визовый центр *</label>
+            <input type="text" name="center"
+              value="<%= values.center || '' %>"
+              placeholder="Краснодар"
+              list="centers-list" required>
+            <datalist id="centers-list">
+              <option value="Краснодар">
+              <option value="Москва">
+              <option value="Санкт-Петербург">
+              <option value="Екатеринбург">
+              <option value="Новосибирск">
+              <option value="Казань">
+              <option value="Ростов-на-Дону">
+              <option value="Уфа">
+              <option value="Нижний Новгород">
+              <option value="Самара">
+              <option value="Красноярск">
+              <option value="Воронеж">
+              <option value="Волгоград">
+            </datalist>
+          </div>
+
+          <div class="form-group">
+            <label>Категория *</label>
+            <select name="category" required>
+              <option value="" disabled selected>Выберите...</option>
+              <option value="Краткосрочные визы"
+                <%= values.category === 'Краткосрочные визы' ? 'selected' : '' %>>Краткосрочные визы</option>
+              <option value="Выдача паспортов"
+                <%= values.category === 'Выдача паспортов' ? 'selected' : '' %>>Выдача паспортов</option>
+              <option value="Премиум-услуги"
+                <%= values.category === 'Премиум-услуги' ? 'selected' : '' %>>Премиум-услуги</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Подкатегория *</label>
+            <input type="text" name="subcategory"
+              value="<%= values.subcategory || '' %>"
+              placeholder="Туризм"
+              list="subcats-list" required>
+            <datalist id="subcats-list">
+              <option value="Туризм">
+              <option value="Деловая поездка">
+              <option value="Частная поездка">
+              <option value="Транзит">
+              <option value="Культурное мероприятие">
+              <option value="Спортивное мероприятие">
+              <option value="Медицина">
+              <option value="Учёба">
+            </datalist>
+          </div>
+
+          <div class="form-group">
+            <label>Дата ОТ *</label>
+            <input type="date" name="date_from"
+              value="<%= values.date_from || '' %>" required>
+          </div>
+
+          <div class="form-group">
+            <label>Дата ДО *</label>
+            <input type="date" name="date_to"
+              value="<%= values.date_to || '' %>" required>
+          </div>
+
+          <div class="form-group form-full">
+            <label>Примечания</label>
+            <textarea name="notes" placeholder="Любые комментарии к заявке..."><%= values.notes || '' %></textarea>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">🚀 Создать и запустить мониторинг</button>
+          <a href="/clients/<%= client.id %>" class="btn btn-ghost">Отмена</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+// Подставляем название страны в hidden поле
+const sel = document.getElementById('countryCode');
+const nm  = document.getElementById('countryName');
+const map = { <%= countries.map(c => `'${c.code}':'${c.name}'`).join(',') %> };
+function sync() { nm.value = map[sel.value] || sel.value; }
+sel.addEventListener('change', sync);
+sync();
+</script>

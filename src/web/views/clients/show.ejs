@@ -1,0 +1,85 @@
+<% title = client.name %>
+<% topbarActions = `<a href="/clients/${client.id}/requests/new" class="btn btn-primary">+ Новая заявка</a>` %>
+
+<div class="detail-header">
+  <div>
+    <h1>👤 <%= client.name %></h1>
+    <div class="meta" style="margin-top:6px">
+      <% if (client.phone) { %><span>📞 <%= client.phone %></span> <% } %>
+      <% if (client.email) { %><span>✉ <%= client.email %></span><% } %>
+      <span> • Клиент с <%= new Date(client.created_at).toLocaleDateString('ru-RU') %></span>
+    </div>
+    <% if (client.notes) { %>
+      <p class="meta" style="margin-top:8px"><%= client.notes %></p>
+    <% } %>
+  </div>
+  <form action="/clients/<%= client.id %>/delete" method="POST"
+        onsubmit="return confirm('Удалить клиента и все его заявки?')">
+    <button class="btn btn-danger btn-sm">🗑 Удалить</button>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    Заявки на мониторинг (<%= requests.length %>)
+    <a href="/clients/<%= client.id %>/requests/new" class="btn btn-primary btn-sm">+ Добавить</a>
+  </div>
+
+  <% if (requests.length === 0) { %>
+    <div class="empty">
+      <div class="empty-icon">📋</div>
+      Нет заявок. <a href="/clients/<%= client.id %>/requests/new" class="link">Создать первую →</a>
+    </div>
+  <% } else { %>
+    <table>
+      <thead>
+        <tr>
+          <th>Страна / Центр</th>
+          <th>Категория</th>
+          <th>Период</th>
+          <th>Слотов найдено</th>
+          <th>Статус заявки</th>
+          <th>Worker</th>
+          <th>Последняя проверка</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <% requests.forEach(r => { %>
+          <tr>
+            <td>
+              <b><%= r.country_name %></b><br>
+              <span class="meta"><%= r.center %></span>
+            </td>
+            <td class="meta"><%= r.category %><br><%= r.subcategory %></td>
+            <td class="meta"><%= r.date_from %><br><%= r.date_to %></td>
+            <td>
+              <% if (parseInt(r.slots_found) > 0) { %>
+                <span class="badge badge-active"><%= r.slots_found %></span>
+              <% } else { %>
+                <span class="meta">0</span>
+              <% } %>
+            </td>
+            <td><span class="badge badge-<%= r.status %>"><%= r.status %></span></td>
+            <td>
+              <% if (r.job_status) { %>
+                <span class="badge badge-<%= r.job_status %>"><%= r.job_status %></span>
+                <% if (r.error_count > 0) { %>
+                  <br><span class="meta" style="color:var(--red)"><%= r.error_count %> err</span>
+                <% } %>
+              <% } else { %>
+                <span class="meta">—</span>
+              <% } %>
+            </td>
+            <td class="meta">
+              <%= r.last_check_at ? new Date(r.last_check_at).toLocaleString('ru-RU') : '—' %>
+            </td>
+            <td>
+              <a href="/requests/<%= r.id %>" class="btn btn-ghost btn-sm">Открыть</a>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>

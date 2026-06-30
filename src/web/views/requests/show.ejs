@@ -1,0 +1,134 @@
+<% title = vr.country_name + ' / ' + vr.center + ' — ' + vr.client_name %>
+
+<div class="meta" style="margin-bottom:16px">
+  <a href="/clients/<%= vr.client_id %>" class="link">← <%= vr.client_name %></a>
+</div>
+
+<div class="detail-header">
+  <div>
+    <h1>🌍 <%= vr.country_name %> — <%= vr.center %></h1>
+    <div class="meta" style="margin-top:6px">
+      <%= vr.category %> / <%= vr.subcategory %> &nbsp;•&nbsp;
+      <%= vr.date_from %> — <%= vr.date_to %>
+    </div>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <span class="badge badge-<%= vr.status %>" style="font-size:13px;padding:4px 12px"><%= vr.status %></span>
+
+    <% if (vr.status === 'active') { %>
+      <form action="/requests/<%= vr.id %>/pause" method="POST">
+        <button class="btn btn-warning btn-sm">⏸ Пауза</button>
+      </form>
+    <% } else if (vr.status === 'paused' || vr.status === 'error') { %>
+      <form action="/requests/<%= vr.id %>/resume" method="POST">
+        <button class="btn btn-success btn-sm">▶ Возобновить</button>
+      </form>
+    <% } %>
+
+    <% if (vr.status !== 'done') { %>
+      <form action="/requests/<%= vr.id %>/done" method="POST">
+        <button class="btn btn-ghost btn-sm">✓ Завершить</button>
+      </form>
+    <% } %>
+
+    <form action="/requests/<%= vr.id %>/delete" method="POST"
+          onsubmit="return confirm('Удалить заявку и все данные?')">
+      <button class="btn btn-danger btn-sm">🗑 Удалить</button>
+    </form>
+  </div>
+</div>
+
+<!-- Worker статус -->
+<div class="info-grid" style="margin-bottom:24px">
+  <div class="info-item">
+    <label>Worker</label>
+    <span>
+      <% if (vr.job_status) { %>
+        <span class="badge badge-<%= vr.job_status %>"><%= vr.job_status %></span>
+      <% } else { %>—<% } %>
+    </span>
+  </div>
+  <div class="info-item">
+    <label>Последняя проверка</label>
+    <span><%= vr.last_check_at ? new Date(vr.last_check_at).toLocaleString('ru-RU') : '—' %></span>
+  </div>
+  <div class="info-item">
+    <label>Следующая проверка</label>
+    <span><%= vr.next_check_at ? new Date(vr.next_check_at).toLocaleString('ru-RU') : '—' %></span>
+  </div>
+  <div class="info-item">
+    <label>Интервал проверки</label>
+    <span><%= vr.check_interval_minutes || 7 %> мин</span>
+  </div>
+  <div class="info-item">
+    <label>Ошибок подряд</label>
+    <span style="color:<%= vr.error_count > 0 ? 'var(--red)' : 'inherit' %>">
+      <%= vr.error_count || 0 %>
+    </span>
+  </div>
+  <% if (vr.last_error) { %>
+  <div class="info-item" style="grid-column:1/-1">
+    <label>Последняя ошибка</label>
+    <span style="color:var(--red);font-size:12px;font-family:monospace"><%= vr.last_error %></span>
+  </div>
+  <% } %>
+  <% if (vr.notes) { %>
+  <div class="info-item" style="grid-column:1/-1">
+    <label>Примечания</label>
+    <span><%= vr.notes %></span>
+  </div>
+  <% } %>
+</div>
+
+<!-- Найденные слоты -->
+<div class="card" style="margin-bottom:20px">
+  <div class="card-header">
+    📅 Найденные слоты (<%= slots.length %>)
+  </div>
+  <% if (slots.length === 0) { %>
+    <div class="empty">
+      <div class="empty-icon">🔍</div>
+      Слоты ещё не найдены. Worker проверяет VFS каждые ~<%= vr.check_interval_minutes || 7 %> мин.
+    </div>
+  <% } else { %>
+    <table>
+      <thead>
+        <tr><th>Дата</th><th>Время</th><th>Центр</th><th>Найден в</th></tr>
+      </thead>
+      <tbody>
+        <% slots.forEach(s => { %>
+          <tr>
+            <td><b><%= s.slot_date %></b></td>
+            <td><%= s.slot_time || '—' %></td>
+            <td><%= s.center || vr.center %></td>
+            <td class="meta"><%= new Date(s.found_at).toLocaleString('ru-RU') %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>
+
+<!-- История уведомлений -->
+<div class="card">
+  <div class="card-header">🔔 История уведомлений</div>
+  <% if (notifications.length === 0) { %>
+    <div class="empty" style="padding:24px">Уведомлений не было</div>
+  <% } else { %>
+    <table>
+      <thead><tr><th>Канал</th><th>Статус</th><th>Отправлено</th><th>Сообщение</th></tr></thead>
+      <tbody>
+        <% notifications.forEach(n => { %>
+          <tr>
+            <td><%= n.channel %></td>
+            <td><span class="badge badge-<%= n.status %>"><%= n.status %></span></td>
+            <td class="meta"><%= new Date(n.sent_at).toLocaleString('ru-RU') %></td>
+            <td class="meta" style="max-width:320px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+              <%= n.message ? n.message.replace(/<[^>]*>/g,'').slice(0,80) : '—' %>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>

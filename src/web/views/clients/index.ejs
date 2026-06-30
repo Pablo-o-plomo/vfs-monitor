@@ -1,0 +1,52 @@
+<% title = 'Клиенты' %>
+<% topbarActions = '<a href="/clients/new" class="btn btn-primary">+ Новый клиент</a>' %>
+
+<div class="card">
+  <div class="card-header">
+    Все клиенты (<%= clients.length %>)
+  </div>
+  <% if (clients.length === 0) { %>
+    <div class="empty">
+      <div class="empty-icon">👥</div>
+      Нет клиентов. <a href="/clients/new" class="link">Добавьте первого →</a>
+    </div>
+  <% } else { %>
+    <table>
+      <thead>
+        <tr>
+          <th>Клиент</th>
+          <th>Контакты</th>
+          <th>Активных заявок</th>
+          <th>Всего заявок</th>
+          <th>Добавлен</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <% clients.forEach(c => { %>
+          <tr>
+            <td>
+              <a href="/clients/<%= c.id %>" class="link"><b><%= c.name %></b></a>
+            </td>
+            <td class="meta">
+              <%= c.phone || '' %>
+              <% if (c.email) { %><br><%= c.email %><% } %>
+            </td>
+            <td>
+              <% if (parseInt(c.active_requests) > 0) { %>
+                <span class="badge badge-active"><%= c.active_requests %> active</span>
+              <% } else { %>
+                <span class="meta">—</span>
+              <% } %>
+            </td>
+            <td class="meta"><%= c.total_requests %></td>
+            <td class="meta"><%= new Date(c.created_at).toLocaleDateString('ru-RU') %></td>
+            <td>
+              <a href="/clients/<%= c.id %>" class="btn btn-ghost btn-sm">Открыть</a>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>

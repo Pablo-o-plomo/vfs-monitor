@@ -1,174 +1,160 @@
-# VFS Global Monitor — Telegram-бот для мониторинга слотов
+# Adria Travel Monitor
 
-Бот проверяет наличие свободных слотов записи в визовый центр VFS Global и присылает уведомление в Telegram, когда слот появляется. **Бронирование выполняется вручную** — бот только уведомляет.
+SaaS-инструмент для мониторинга свободных слотов записи в визовые центры VFS Global.
 
----
-
-## Быстрый старт (локально)
-
-```bash
-# 1. Клонируем / копируем проект
-cd vfs-monitor
-
-# 2. Устанавливаем зависимости
-npm install
-
-# 3. Устанавливаем браузер Playwright
-npx playwright install chromium
-
-# 4. Создаём .env
-cp .env.example .env
-nano .env   # заполняем все переменные
-
-# 5. Тестовый запуск
-npm start
-```
-
----
-
-## Деплой на TimeWeb (Ubuntu сервер)
-
-### 1. Подключаемся к серверу
-
-```bash
-ssh root@<IP_СЕРВЕРА>
-```
-
-### 2. Устанавливаем Node.js 20 (если ещё нет)
-
-```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-apt-get install -y nodejs
-node -v  # должно быть v20+
-```
-
-### 3. Устанавливаем системные зависимости для Chromium
-
-```bash
-npx playwright install-deps chromium
-# или вручную:
-apt-get install -y libnss3 libatk-bridge2.0-0 libdrm2 libxkbcommon0 \
-  libgbm1 libasound2 libxcomposite1 libxdamage1 libxrandr2 libxss1 \
-  libxtst6 fonts-liberation libappindicator3-1 xdg-utils
-```
-
-### 4. Копируем проект на сервер
-
-```bash
-# С локальной машины:
-scp -r vfs-monitor root@<IP>:/root/
-```
-
-или через git:
-
-```bash
-git clone <repo_url> /root/vfs-monitor
-```
-
-### 5. Устанавливаем зависимости и браузер на сервере
-
-```bash
-cd /root/vfs-monitor
-npm install
-npx playwright install chromium
-```
-
-### 6. Создаём .env
-
-```bash
-cp .env.example .env
-nano .env
-```
-
-Минимальный `.env`:
-
-```
-VFS_EMAIL=test@example.com
-VFS_PASSWORD=yourpassword
-VFS_CENTER=Краснодар
-VFS_CATEGORY=Краткосрочные
-VFS_SUBCATEGORY=Туризм
-DATE_FROM=2026-07-01
-DATE_TO=2026-08-31
-TELEGRAM_BOT_TOKEN=1234567890:AAxxxxxxxx
-TELEGRAM_CHAT_ID=-100xxxxxxxxxx
-CHECK_INTERVAL_MIN=7
-CHECK_INTERVAL_JITTER=3
-```
-
-### 7. Устанавливаем PM2
-
-```bash
-npm install -g pm2
-```
-
-### 8. Запускаем через PM2
-
-```bash
-cd /root/vfs-monitor
-pm2 start ecosystem.config.js
-pm2 save           # автозапуск при перезагрузке сервера
-pm2 startup        # следуем инструкции в выводе
-```
-
-### Управление
-
-```bash
-pm2 status         # статус процессов
-pm2 logs vfs-monitor   # логи в реальном времени
-pm2 restart vfs-monitor
-pm2 stop vfs-monitor
-```
-
----
-
-## Как получить Telegram Bot Token и Chat ID
-
-1. Напишите [@BotFather](https://t.me/BotFather) → `/newbot` → получаете токен
-2. Создайте канал или группу, добавьте бота как администратора
-3. Отправьте любое сообщение в канал, затем откройте:  
-   `https://api.telegram.org/bot<TOKEN>/getUpdates`  
-   Найдите поле `chat.id` — это и есть `TELEGRAM_CHAT_ID` (для каналов будет отрицательным)
+**Что делает:**
+- Отслеживает появление слотов по параметрам (страна, центр, категория, даты)
+- Хранит клиентов и их заявки в PostgreSQL
+- Присылает Telegram-уведомление когда слот появляется
+- Не бронирует автоматически — финальная запись делается вручную
 
 ---
 
 ## Архитектура
 
 ```
-src/
-├── index.js      — главный цикл, дедупликация, обработка ошибок
-├── monitor.js    — логин + перехват API слотов + DOM-парсинг как fallback
-├── browser.js    — Playwright stealth, управление сессией
-├── telegram.js   — отправка уведомлений
-├── config.js     — конфигурация из .env
-└── logger.js     — Winston логгер
+┌─────────────┐    ┌──────────────────┐    ┌──────────────┐
+│  Web Admin  │    │    PostgreSQL     │    │   Worker     │
+│  (Express)  │◄──►│  5 таблиц        │◄──►│  VFS checks  │
+│  :3000      │    │                  │    │  Telegram    │
+└─────────────┘    └──────────────────┘    └──────────────┘
 ```
 
-### Стратегия обхода защиты
+**Таблицы:** `clients` → `visa_requests` → `monitoring_jobs` + `slot_events` + `notifications`
 
-- **playwright-extra + stealth plugin** — скрывает признаки автоматизации
-- **Реалистичные задержки** — случайные паузы между действиями
-- **Сохранение сессии** — cookies сохраняются в `session.json`, повторный логин реже
-- **Умеренный интервал** — 7±3 минуты между проверками (не агрессивно)
-- **Тестовый аккаунт** — используйте аккаунт без реальных данных на стадии тестирования
-
-### Перехват API
-
-Бот перехватывает XHR-ответы содержащие `/slot`, `/appointment`, `/schedule` и парсит JSON. Если API изменился — автоматически падает к парсингу DOM-календаря.
+**Процессы:**
+- `web` — Express admin panel, управление клиентами и заявками
+- `worker` — фоновый процесс, читает активные заявки и проверяет VFS каждые ~7 мин
 
 ---
 
-## Что делать при получении уведомления
+## Запуск локально
 
-1. Открыть ссылку из уведомления
-2. Войти в **свой основной аккаунт VFS**
-3. Выбрать визовый центр, категорию, заявителя
-4. Выбрать найденный слот и подтвердить бронирование вручную
+### 1. Зависимости
+
+```bash
+cd vfs-monitor
+npm install
+npx playwright install chromium
+```
+
+### 2. Настройка
+
+```bash
+cp .env.example .env
+# Заполнить: DATABASE_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
+#            ADMIN_PASSWORD, VFS_EMAIL, VFS_PASSWORD
+```
+
+### 3. База данных (локально)
+
+```bash
+# Создать БД в PostgreSQL:
+createdb adria_monitor
+
+# В .env:
+DATABASE_URL=postgresql://localhost/adria_monitor
+```
+
+### 4. Запуск
+
+```bash
+# Оба процесса вместе (dev режим):
+npm run dev
+
+# Или раздельно:
+npm run dev:web     # только web-панель
+npm run dev:worker  # только worker
+
+# Применить миграции отдельно:
+npm run migrate
+```
+
+Открыть: http://localhost:3000
+
+---
+
+## Деплой на Railway
+
+### Подготовка
+
+1. Создать проект на [railway.app](https://railway.app)
+2. Добавить PostgreSQL плагин → Railway автоматически добавит `DATABASE_URL`
+3. Подключить GitHub репозиторий
+
+### Два сервиса в одном проекте
+
+Railway поддерживает несколько сервисов из одного репо:
+
+**Сервис 1: Web**
+- Start command: `npm start`
+- Переменные: все 6 из `.env.example`
+
+**Сервис 2: Worker**
+- Start command: `npm run worker`
+- Переменные: те же 6 (можно скопировать)
+- Public URL: не нужен
+
+### Переменные окружения (Railway → Variables)
+
+```
+DATABASE_URL          — выдаётся автоматически Postgres плагином
+TELEGRAM_BOT_TOKEN    — токен бота от @BotFather
+TELEGRAM_CHAT_ID      — ID канала (с минусом) или чата
+ADMIN_PASSWORD        — пароль для входа в панель
+VFS_EMAIL             — email тестового аккаунта VFS
+VFS_PASSWORD          — пароль тестового аккаунта VFS
+```
+
+### Один раз после деплоя
+
+Миграции применяются автоматически при старте `web` и `worker` процессов.
+
+---
+
+## Структура файлов
+
+```
+src/
+├── config.js              # 6 ENV-переменных
+├── logger.js              # Winston
+├── browser.js             # Playwright stealth + сессии
+├── db/
+│   └── index.js           # pg Pool + migrate()
+├── services/
+│   ├── vfs.js             # Логика проверки VFS (принимает params из БД)
+│   └── notifier.js        # Telegram с инфо о клиенте
+├── web/
+│   ├── server.js          # Express
+│   ├── middleware/auth.js
+│   ├── routes/
+│   │   ├── dashboard.js
+│   │   ├── clients.js
+│   │   └── requests.js
+│   └── views/             # EJS шаблоны
+└── worker/
+    └── index.js           # Цикл мониторинга
+
+migrations/
+└── 001_init.sql           # Схема БД (5 таблиц)
+
+nixpacks.toml              # Railway build (Chromium deps)
+Procfile                   # web + worker процессы
+```
+
+---
+
+## Как получить Telegram Bot Token и Chat ID
+
+1. [@BotFather](https://t.me/BotFather) → `/newbot` → токен
+2. Создать канал, добавить бота как администратора
+3. `https://api.telegram.org/bot<TOKEN>/getUpdates` → найти `chat.id`
 
 ---
 
 ## Важно
 
 - Бот **не вводит паспортные данные** и **не бронирует автоматически**
-- Используйте разумный интервал (не менее 5 минут) — агрессивный polling может привести к блокировке IP
-- При длительной блокировке — смените IP сервера или добавьте proxy
+- Используйте тестовый аккаунт VFS для мониторинга
+- Интервал по умолчанию 7±3 мин — не агрессивно, VFS не банит при таком режиме
+- При 5 ошибках подряд заявка переходит в статус `error` и приходит Telegram-уведомление

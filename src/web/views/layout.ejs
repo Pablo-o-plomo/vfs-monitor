@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= typeof title !== 'undefined' ? title + ' — ' : '' %>Adria Monitor</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0f1117;
+      --surface:  #1a1d27;
+      --border:   #2a2d3a;
+      --accent:   #4f8ef7;
+      --accent2:  #7c3aed;
+      --green:    #22c55e;
+      --red:      #ef4444;
+      --yellow:   #f59e0b;
+      --gray:     #6b7280;
+      --text:     #e2e8f0;
+      --text2:    #94a3b8;
+      --sidebar:  220px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      min-height: 100vh;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    /* ── Sidebar ── */
+    .sidebar {
+      width: var(--sidebar);
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      position: fixed;
+      top: 0; left: 0; bottom: 0;
+      z-index: 100;
+    }
+    .sidebar-logo {
+      padding: 20px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    .sidebar-logo .brand { font-size: 15px; font-weight: 700; color: var(--text); }
+    .sidebar-logo .sub   { font-size: 11px; color: var(--text2); margin-top: 2px; }
+
+    .sidebar-nav { flex: 1; padding: 12px 0; }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 18px;
+      color: var(--text2);
+      text-decoration: none;
+      border-radius: 0;
+      transition: background .15s, color .15s;
+      font-size: 13.5px;
+    }
+    .nav-item:hover         { background: rgba(255,255,255,.05); color: var(--text); }
+    .nav-item.active        { background: rgba(79,142,247,.12); color: var(--accent); }
+    .nav-icon { font-size: 16px; width: 20px; text-align: center; }
+
+    .sidebar-footer {
+      padding: 16px 18px;
+      border-top: 1px solid var(--border);
+    }
+    .sidebar-footer form button {
+      background: none; border: 1px solid var(--border);
+      color: var(--text2); padding: 6px 12px; border-radius: 6px;
+      cursor: pointer; font-size: 12px; width: 100%;
+    }
+    .sidebar-footer form button:hover { border-color: var(--red); color: var(--red); }
+
+    /* ── Main ── */
+    .main {
+      margin-left: var(--sidebar);
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+    .topbar {
+      padding: 16px 28px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+    .page-title { font-size: 16px; font-weight: 600; }
+    .topbar-actions { display: flex; gap: 10px; align-items: center; }
+
+    .content { padding: 28px; flex: 1; }
+
+    /* ── Cards / stats ── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+    }
+    .stat-label { font-size: 12px; color: var(--text2); text-transform: uppercase; letter-spacing: .06em; }
+    .stat-value { font-size: 32px; font-weight: 700; margin-top: 6px; }
+    .stat-card.green .stat-value { color: var(--green); }
+    .stat-card.blue  .stat-value { color: var(--accent); }
+    .stat-card.yellow .stat-value { color: var(--yellow); }
+    .stat-card.purple .stat-value { color: #a78bfa; }
+
+    /* ── Table ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+    .card-header {
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th {
+      padding: 10px 16px;
+      text-align: left;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: var(--text2);
+      border-bottom: 1px solid var(--border);
+    }
+    td {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+      vertical-align: middle;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255,255,255,.02); }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 16px; border-radius: 7px; font-size: 13px;
+      font-weight: 500; cursor: pointer; text-decoration: none;
+      border: none; transition: opacity .15s, background .15s;
+    }
+    .btn:hover { opacity: .85; }
+    .btn-primary  { background: var(--accent);  color: #fff; }
+    .btn-success  { background: var(--green);   color: #fff; }
+    .btn-danger   { background: var(--red);     color: #fff; }
+    .btn-warning  { background: var(--yellow);  color: #000; }
+    .btn-ghost    { background: rgba(255,255,255,.07); color: var(--text); }
+    .btn-sm       { padding: 5px 10px; font-size: 12px; }
+
+    /* ── Badges ── */
+    .badge {
+      display: inline-block; padding: 2px 9px; border-radius: 20px;
+      font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+    }
+    .badge-active  { background: rgba(34,197,94,.15);  color: var(--green); }
+    .badge-paused  { background: rgba(245,158,11,.15); color: var(--yellow); }
+    .badge-done    { background: rgba(107,114,128,.15); color: var(--gray); }
+    .badge-error   { background: rgba(239,68,68,.15);  color: var(--red); }
+    .badge-idle    { background: rgba(148,163,184,.1); color: var(--text2); }
+    .badge-running { background: rgba(79,142,247,.15); color: var(--accent); }
+
+    /* ── Forms ── */
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .form-full  { grid-column: 1 / -1; }
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    .form-group label { font-size: 12px; color: var(--text2); font-weight: 500; }
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      color: var(--text);
+      padding: 9px 12px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color .15s;
+      font-family: inherit;
+    }
+    .form-group input:focus,
+    .form-group select:focus,
+    .form-group textarea:focus { border-color: var(--accent); }
+    .form-group textarea { min-height: 80px; resize: vertical; }
+    .form-actions { display: flex; gap: 10px; margin-top: 8px; }
+
+    /* ── Alert ── */
+    .alert {
+      padding: 12px 16px; border-radius: 8px; margin-bottom: 20px;
+      font-size: 13.5px; display: flex; align-items: center; gap: 10px;
+    }
+    .alert-error   { background: rgba(239,68,68,.12); border: 1px solid rgba(239,68,68,.3); color: #fca5a5; }
+    .alert-success { background: rgba(34,197,94,.12); border: 1px solid rgba(34,197,94,.3); color: #86efac; }
+
+    /* ── Meta / helpers ── */
+    .meta   { font-size: 12px; color: var(--text2); }
+    .link   { color: var(--accent); text-decoration: none; }
+    .link:hover { text-decoration: underline; }
+    .empty  { padding: 40px; text-align: center; color: var(--text2); }
+    .empty-icon { font-size: 36px; margin-bottom: 10px; }
+
+    /* ── Login page ── */
+    .login-wrap {
+      min-height: 100vh; width: 100%; display: flex;
+      align-items: center; justify-content: center; background: var(--bg);
+    }
+    .login-box {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; padding: 36px 32px; width: 100%; max-width: 360px;
+    }
+    .login-box h1 { font-size: 20px; margin-bottom: 6px; }
+    .login-box p  { color: var(--text2); font-size: 13px; margin-bottom: 24px; }
+
+    /* ── Detail header ── */
+    .detail-header {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      margin-bottom: 24px; gap: 16px;
+    }
+    .detail-header h1 { font-size: 22px; font-weight: 700; }
+    .detail-header .meta { margin-top: 4px; }
+
+    /* ── Info grid ── */
+    .info-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px; margin-bottom: 24px;
+    }
+    .info-item label { display: block; font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing:.05em; margin-bottom: 4px; }
+    .info-item span  { font-size: 14px; }
+  </style>
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <div class="brand">🌍 Adria Monitor</div>
+    <div class="sub">VFS Slot Tracker</div>
+  </div>
+  <nav class="sidebar-nav">
+    <a href="/"        class="nav-item <%= path === '/'        ? 'active' : '' %>">
+      <span class="nav-icon">📊</span> Дашборд
+    </a>
+    <a href="/clients" class="nav-item <%= path.startsWith('/clients') ? 'active' : '' %>">
+      <span class="nav-icon">👥</span> Клиенты
+    </a>
+  </nav>
+  <div class="sidebar-footer">
+    <form action="/logout" method="POST">
+      <button type="submit">↩ Выйти</button>
+    </form>
+  </div>
+</aside>
+
+<div class="main">
+  <div class="topbar">
+    <div class="page-title"><%= typeof title !== 'undefined' ? title : 'Adria Monitor' %></div>
+    <div class="topbar-actions"><%- typeof topbarActions !== 'undefined' ? topbarActions : '' %></div>
+  </div>
+  <div class="content">
+    <%- body %>
+  </div>
+</div>
+
+</body>
+</html>
