@@ -1,5 +1,27 @@
 <% title = 'Дашборд' %>
 
+<!-- Статус сервисов -->
+<div class="svc-row">
+  <div class="svc-chip">
+    <span class="svc-dot <%= svc.worker === 'ok' ? 'green' : svc.worker === 'warn' ? 'yellow' : svc.worker === 'dead' ? 'red' : '' %>"></span>
+    Worker
+    <% if (svc.workerAt) { %>
+      <span style="color:var(--text2);font-size:11px">• <%= svc.workerAt %></span>
+    <% } else { %>
+      <span style="color:var(--text2);font-size:11px">• не запускался</span>
+    <% } %>
+  </div>
+  <div class="svc-chip">
+    <span class="svc-dot <%= svc.db === 'ok' ? 'green' : 'red' %>"></span>
+    PostgreSQL
+  </div>
+  <div class="svc-chip">
+    <span class="svc-dot <%= svc.telegram === 'ok' ? 'green' : 'red' %>"></span>
+    Telegram
+  </div>
+</div>
+
+<!-- Счётчики -->
 <div class="stats-grid">
   <div class="stat-card blue">
     <div class="stat-label">Клиентов</div>
@@ -10,18 +32,30 @@
     <div class="stat-value"><%= stats.active %></div>
   </div>
   <div class="stat-card yellow">
+    <div class="stat-label">На паузе</div>
+    <div class="stat-value"><%= stats.paused %></div>
+  </div>
+  <div class="stat-card" style="<%= stats.error > 0 ? '' : '' %>">
+    <div class="stat-label">Ошибок</div>
+    <div class="stat-value" style="color:<%= stats.error > 0 ? 'var(--red)' : 'var(--text2)' %>"><%= stats.error %></div>
+  </div>
+  <div class="stat-card purple">
     <div class="stat-label">Слотов за 24 ч</div>
     <div class="stat-value"><%= stats.slots24h %></div>
   </div>
-  <div class="stat-card purple">
-    <div class="stat-label">Ждут проверки</div>
-    <div class="stat-value"><%= stats.pending %></div>
+  <div class="stat-card">
+    <div class="stat-label">Проверок за 24 ч</div>
+    <div class="stat-value" style="color:var(--accent)"><%= stats.checks24h %></div>
   </div>
 </div>
 
+<!-- Последние слоты -->
 <div class="card">
   <div class="card-header">
     🕐 Последние найденные слоты
+    <% if (stats.pending > 0) { %>
+      <span class="badge badge-idle"><%= stats.pending %> ждут проверки</span>
+    <% } %>
   </div>
   <% if (recentSlots.length === 0) { %>
     <div class="empty">
@@ -50,7 +84,7 @@
             </td>
             <td><%= s.country_name %> / <%= s.center %></td>
             <td class="meta"><%= s.category %> / <%= s.subcategory %></td>
-            <td class="meta"><%= new Date(s.found_at).toLocaleString('ru-RU') %></td>
+            <td class="meta"><%= fmt.dt(s.found_at) %></td>
           </tr>
         <% }) %>
       </tbody>

@@ -33,10 +33,22 @@ app.use(session({
   cookie: { maxAge: 8 * 60 * 60 * 1000 }, // 8 часов
 }));
 
-// Текущий год во все шаблоны
+// Текущий год + форматтер дат во все шаблоны
 app.use((req, res, next) => {
   res.locals.year = new Date().getFullYear();
   res.locals.path = req.path;
+  // fmt.date(d)  → "10.07.2026"  (UTC-safe для pg DATE колонок)
+  // fmt.dt(d)    → "10.07.2026, 14:30"
+  res.locals.fmt = {
+    date: (d) => {
+      if (!d) return '—';
+      const dt = new Date(d);
+      const day = String(dt.getUTCDate()).padStart(2, '0');
+      const mon = String(dt.getUTCMonth() + 1).padStart(2, '0');
+      return `${day}.${mon}.${dt.getUTCFullYear()}`;
+    },
+    dt: (d) => d ? new Date(d).toLocaleString('ru-RU') : '—',
+  };
   next();
 });
 

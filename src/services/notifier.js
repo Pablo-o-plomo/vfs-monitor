@@ -1,5 +1,5 @@
 /**
- * src/services/notifier.js — Telegram-уведомления с контекстом клиента
+ * src/services/notifier.js — Telegram-уведомления
  */
 
 const TelegramBot = require('node-telegram-bot-api');
@@ -24,9 +24,15 @@ async function send(text, chatId) {
 
 /**
  * Уведомление о найденных слотах
- * @param {Object} ctx  — { client, request, slots }
+ *
+ * @param {object} ctx
+ * @param {object} ctx.client     — { name, phone }
+ * @param {object} ctx.request    — поля из visa_requests
+ * @param {Array}  ctx.slots      — найденные слоты [{ date, time }]
+ * @param {number} ctx.requestId  — id заявки (для ссылки на панель)
+ * @param {string} [ctx.chatId]   — переопределить chatId (для клиентского Telegram)
  */
-async function notifySlots({ client, request, slots }) {
+async function notifySlots({ client, request, slots, requestId, chatId }) {
   const bookUrl = `${config.vfs.baseUrl}/${request.country_code}/book-appointment`;
 
   const slotLines = slots.map((s) => {
@@ -34,23 +40,54 @@ async function notifySlots({ client, request, slots }) {
     return `  📅 <b>${s.date}</b>${time}`;
   }).join('\n');
 
+  // Форматируем период (pg DATE → строка dd.mm.yyyy если ещё не строка)
+  const fmtDate = (d) => {
+    if (!d) return '—';
+    const dt = new Date(d);
+    const day = String(dt.getUTCDate()).padStart(2, '0');
+    const mon = String(dt.getUTCMonth() + 1).padStart(2, '0');
+    return `${day}.${mon}.${dt.getUTCFullYear()}`;
+  };
+
+  const phoneStr = client.phone ? `  📞 ${client.phone}` : '';
+  const adminLink = config.publicUrl && requestId
+    ? `\n🔗 <a href="${config.publicUrl}/requests/${requestId}">Открыть заявку →</a>`
+    : '';
+
   const text = [
     `🟢 <b>Найдены свободные слоты!</b>`,
     ``,
-    `👤 Клиент: <b>${client.name}</b>`,
-    `🌍 Страна: ${request.country_name}`,
-    `🏢 Центр: ${request.center}`,
-    `📋 Категория: ${request.category} / ${request.subcategory}`,
-    `📆 Период: ${request.date_from} — ${request.date_to}`,
+    `👤 <b>${client.name}</b>${phoneStr}`,
+    `🌍 ${request.country_name} — ${request.center}`,
+    `📋 ${request.category} / ${request.subcategory}`,
+    `📆 ${fmtDate(request.date_from)} — ${fmtDate(request.date_to)}`,
     ``,
     slotLines,
     ``,
-    `🔗 <a href="${bookUrl}">Записаться →</a>`,
+    `🔗 <a href="${bookUrl}">Записаться на VFS →</a>${adminLink}`,
     ``,
-    `⏱ ${new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}`,
+    `⏱ ${new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })} МСК`,
   ].join('\n');
 
-  await send(text);
+  // Основной чат (админ)
+  if (!chatId) {
+    await send(text, config.telegram.chatId);
+  } else {
+    // Клиентский чат — более короткое сообщение без admin-ссылки
+    const clientText = [
+      `🟢 <b>Нашли слот в визовый центр!</b>`,
+      ``,
+      `🌍 ${request.country_name} — ${request.center}`,
+      `📋 ${request.category} / ${request.subcategory}`,
+      ``,
+      slotLines,
+      ``,
+      `🔗 <a href="${bookUrl}">Записаться →</a>`,
+      ``,
+      `⏱ ${new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })} МСК`,
+    ].join('\n');
+    await send(clientText, chatId);
+  }
 }
 
 /**

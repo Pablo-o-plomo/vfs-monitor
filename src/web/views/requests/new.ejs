@@ -100,6 +100,42 @@
           </div>
         </div>
 
+        <!-- Настройки мониторинга -->
+        <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--border)">
+          <div style="font-size:12px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:14px">
+            ⚙ Настройки мониторинга
+          </div>
+          <div class="settings-inline">
+            <div class="form-group">
+              <label>Интервал (мин)</label>
+              <input type="number" name="interval_minutes" value="<%= values.interval_minutes || 7 %>" min="3" max="60">
+            </div>
+            <div class="form-group">
+              <label>Разброс (мин)</label>
+              <input type="number" name="jitter_minutes" value="<%= values.jitter_minutes || 3 %>" min="0" max="15">
+            </div>
+            <div class="form-group">
+              <label>Лимит уведомлений/день</label>
+              <input type="number" name="notify_limit_per_day" value="<%= values.notify_limit_per_day || 5 %>" min="1" max="50">
+            </div>
+            <div class="form-group">
+              <label>Приоритет</label>
+              <input type="number" name="priority" value="<%= values.priority || 0 %>" min="0" max="10">
+            </div>
+            <div class="form-group">
+              <label>Telegram клиента (chat_id)</label>
+              <input type="text" name="notify_client_telegram" value="<%= values.notify_client_telegram || '' %>" placeholder="-100xxxxxxx">
+            </div>
+            <div class="form-group" style="justify-content:flex-end">
+              <label>&nbsp;</label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:var(--text)">
+                <input type="checkbox" name="work_night" style="width:auto" <%= values.work_night ? 'checked' : '' %>>
+                Проверять ночью (23:00–07:00 МСК)
+              </label>
+            </div>
+          </div>
+        </div>
+
         <div class="form-actions">
           <button type="submit" class="btn btn-primary">🚀 Создать и запустить мониторинг</button>
           <a href="/clients/<%= client.id %>" class="btn btn-ghost">Отмена</a>

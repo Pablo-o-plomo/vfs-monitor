@@ -5,9 +5,9 @@
   <div>
     <h1>👤 <%= client.name %></h1>
     <div class="meta" style="margin-top:6px">
-      <% if (client.phone) { %><span>📞 <%= client.phone %></span> <% } %>
-      <% if (client.email) { %><span>✉ <%= client.email %></span><% } %>
-      <span> • Клиент с <%= new Date(client.created_at).toLocaleDateString('ru-RU') %></span>
+      <% if (client.phone) { %><span>📞 <%= client.phone %></span>&nbsp; <% } %>
+      <% if (client.email) { %><span>✉ <%= client.email %></span>&nbsp; <% } %>
+      <span>Клиент с <%= fmt.date(client.created_at) %></span>
     </div>
     <% if (client.notes) { %>
       <p class="meta" style="margin-top:8px"><%= client.notes %></p>
@@ -31,55 +31,52 @@
       Нет заявок. <a href="/clients/<%= client.id %>/requests/new" class="link">Создать первую →</a>
     </div>
   <% } else { %>
-    <table>
-      <thead>
-        <tr>
-          <th>Страна / Центр</th>
-          <th>Категория</th>
-          <th>Период</th>
-          <th>Слотов найдено</th>
-          <th>Статус заявки</th>
-          <th>Worker</th>
-          <th>Последняя проверка</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        <% requests.forEach(r => { %>
-          <tr>
-            <td>
-              <b><%= r.country_name %></b><br>
-              <span class="meta"><%= r.center %></span>
-            </td>
-            <td class="meta"><%= r.category %><br><%= r.subcategory %></td>
-            <td class="meta"><%= r.date_from %><br><%= r.date_to %></td>
-            <td>
-              <% if (parseInt(r.slots_found) > 0) { %>
-                <span class="badge badge-active"><%= r.slots_found %></span>
-              <% } else { %>
-                <span class="meta">0</span>
-              <% } %>
-            </td>
-            <td><span class="badge badge-<%= r.status %>"><%= r.status %></span></td>
-            <td>
+    <div class="req-cards">
+      <% requests.forEach(r => { %>
+        <div class="req-card">
+          <!-- Заголовок -->
+          <div class="req-card-title">
+            🌍 <%= r.country_name %> — <%= r.center %>
+          </div>
+
+          <!-- Детали -->
+          <div class="req-card-meta">
+            <%= r.category %> / <%= r.subcategory %><br>
+            📅 <%= fmt.date(r.date_from) %> — <%= fmt.date(r.date_to) %>
+          </div>
+
+          <!-- Слоты -->
+          <% if (parseInt(r.slots_found) > 0) { %>
+            <div style="color:var(--green);font-size:12px;font-weight:600">
+              ✓ Найдено слотов: <%= r.slots_found %>
+            </div>
+          <% } %>
+
+          <!-- Нижняя часть -->
+          <div class="req-card-footer">
+            <div class="req-card-badges">
+              <span class="badge badge-<%= r.status %>"><%= r.status %></span>
               <% if (r.job_status) { %>
                 <span class="badge badge-<%= r.job_status %>"><%= r.job_status %></span>
-                <% if (r.error_count > 0) { %>
-                  <br><span class="meta" style="color:var(--red)"><%= r.error_count %> err</span>
-                <% } %>
-              <% } else { %>
-                <span class="meta">—</span>
               <% } %>
-            </td>
-            <td class="meta">
-              <%= r.last_check_at ? new Date(r.last_check_at).toLocaleString('ru-RU') : '—' %>
-            </td>
-            <td>
-              <a href="/requests/<%= r.id %>" class="btn btn-ghost btn-sm">Открыть</a>
-            </td>
-          </tr>
-        <% }) %>
-      </tbody>
-    </table>
+              <% if (r.error_count > 0) { %>
+                <span class="badge badge-error"><%= r.error_count %> err</span>
+              <% } %>
+              <% if (r.priority > 0) { %>
+                <span class="badge" style="background:rgba(124,58,237,.15);color:#a78bfa">⬆ p<%= r.priority %></span>
+              <% } %>
+            </div>
+            <a href="/requests/<%= r.id %>" class="btn btn-ghost btn-sm">Открыть →</a>
+          </div>
+
+          <!-- Время последней проверки -->
+          <% if (r.last_check_at) { %>
+            <div class="meta" style="font-size:11px">
+              Проверка: <%= fmt.dt(r.last_check_at) %>
+            </div>
+          <% } %>
+        </div>
+      <% }) %>
+    </div>
   <% } %>
 </div>

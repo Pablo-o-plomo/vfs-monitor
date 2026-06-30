@@ -246,6 +246,50 @@
     .detail-header h1 { font-size: 22px; font-weight: 700; }
     .detail-header .meta { margin-top: 4px; }
 
+    /* ── Request cards grid ── */
+    .req-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px,1fr)); gap: 14px; padding: 16px; }
+    .req-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      transition: border-color .15s;
+    }
+    .req-card:hover { border-color: var(--accent); }
+    .req-card-title { font-size: 15px; font-weight: 600; }
+    .req-card-meta  { font-size: 12px; color: var(--text2); line-height: 1.6; }
+    .req-card-footer {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--border);
+    }
+    .req-card-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+
+    /* ── Service status dot ── */
+    .svc-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+    .svc-chip {
+      display: flex; align-items: center; gap: 7px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 20px; padding: 6px 14px; font-size: 12px; color: var(--text2);
+    }
+    .svc-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--gray);
+    }
+    .svc-dot.green  { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .svc-dot.yellow { background: var(--yellow); }
+    .svc-dot.red    { background: var(--red); }
+
+    /* ── Check history table subtle ── */
+    .result-slot_found { color: var(--green); font-weight: 600; }
+    .result-no_slots   { color: var(--text2); }
+    .result-error      { color: var(--red); }
+
+    /* ── Settings section ── */
+    .settings-inline { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px,1fr)); gap: 12px; }
+
     /* ── Info grid ── */
     .info-grid {
       display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -266,7 +310,7 @@
     <a href="/"        class="nav-item <%= path === '/'        ? 'active' : '' %>">
       <span class="nav-icon">📊</span> Дашборд
     </a>
-    <a href="/clients" class="nav-item <%= path.startsWith('/clients') ? 'active' : '' %>">
+    <a href="/clients" class="nav-item <%= path.startsWith('/clients') || path.startsWith('/requests') ? 'active' : '' %>">
       <span class="nav-icon">👥</span> Клиенты
     </a>
   </nav>

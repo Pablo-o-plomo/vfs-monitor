@@ -34,6 +34,10 @@ module.exports = {
     port: parseInt(process.env.PORT || '3000', 10),
   },
 
+  // Публичный URL панели (необязательно, для ссылок в Telegram)
+  // Пример: PUBLIC_URL=https://your-app.up.railway.app
+  publicUrl: process.env.PUBLIC_URL || '',
+
   // Worker
   worker: {
     pollIntervalMs:   parseInt(process.env.WORKER_POLL_MS    || '60000',  10), // как часто worker проверяет БД
