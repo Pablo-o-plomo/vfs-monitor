@@ -142,13 +142,10 @@
         </div>
         <div class="form-group">
           <label for="work_night_cb">Ночные проверки</label>
-          <div style="display:flex;align-items:center;gap:8px;padding-top:4px">
-            <input type="checkbox" id="work_night_cb" name="work_night" value="on"
-              style="width:16px;height:16px;padding:0;border:none;background:transparent;cursor:pointer;accent-color:var(--accent);flex-shrink:0"
-              <%= vr.work_night ? 'checked' : '' %>>
-            <label for="work_night_cb" style="cursor:pointer;font-size:13px;color:var(--text);font-weight:400;margin:0">
-              Проверять ночью (23–07 МСК)
-            </label>
+          <div>
+            <% var workNightChecked = vr.work_night ? 'checked' : ''; %>
+            <input type="checkbox" id="work_night_cb" name="work_night" value="on" <%- workNightChecked %>>
+            <label for="work_night_cb">Проверять ночью (23–07 МСК)</label>
           </div>
         </div>
       </div>
@@ -241,4 +238,15 @@
             <td><%= n.channel %></td>
             <td><span class="badge badge-<%= n.status %>"><%= n.status %></span></td>
             <td class="meta"><%= fmt.dt(n.sent_at) %></td>
-            <td class
+            <td class="meta" style="max-width:300px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+              <%= n.message ? n.message.slice(0,80) : '—' %>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>
+
+<style>
+.hidden { displ
