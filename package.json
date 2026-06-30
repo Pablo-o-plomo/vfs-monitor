@@ -1,0 +1,21 @@
+{
+  "name": "vfs-monitor",
+  "version": "1.0.0",
+  "description": "VFS Global slot monitor with Telegram notifications",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "playwright": "^1.44.0",
+    "node-telegram-bot-api": "^0.66.0",
+    "dotenv": "^16.4.5",
+    "winston": "^3.13.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
