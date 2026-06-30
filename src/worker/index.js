@@ -20,11 +20,47 @@ const { closeBrowser, sleep } = require('../browser');
 const logger = require('../logger');
 const config = require('../config');
 
-const MAX_ERRORS   = 5;
-const DEDUP_TTL_MS = config.worker.dedupTtlMs;
+const MAX_ERRORS      = 5;
+const DEDUP_TTL_MS    = config.worker.dedupTtlMs;
+const HEARTBEAT_MS    = 30_000;   // каждые 30 сек
+const workerStartedAt = new Date();
 
 // In-memory дедупликация: requestId → Map(slotKey → timestamp)
 const seenSlots = new Map();
+
+// ─────────────────────────────────────────────
+// HEARTBEAT
+// ─────────────────────────────────────────────
+
+async function heartbeat() {
+  try {
+    await query(`
+      INSERT INTO worker_status(id, pid, started_at, last_beat, beat_count)
+      VALUES (1, $1, $2, NOW(), 1)
+      ON CONFLICT (id) DO UPDATE SET
+        last_beat  = NOW(),
+        beat_count = worker_status.beat_count + 1,
+        pid        = EXCLUDED.pid,
+        started_at = COALESCE(worker_status.started_at, EXCLUDED.started_at)
+    `, [process.pid, workerStartedAt]);
+  } catch (e) {
+    // worker_status может не существовать до применения миграции 003
+    logger.warn('[worker] heartbeat failed: ' + e.message);
+  }
+}
+
+async function setCurrentJob(id, desc) {
+  await query(
+    'UPDATE worker_status SET current_job_id=$1, current_job_desc=$2 WHERE id=1',
+    [id, desc]
+  ).catch(() => {});
+}
+
+async function clearCurrentJob() {
+  await query(
+    'UPDATE worker_status SET current_job_id=NULL, current_job_desc=NULL WHERE id=1'
+  ).catch(() => {});
+}
 
 // ─────────────────────────────────────────────
 // НОЧНОЕ ВРЕМЯ МСК
@@ -94,6 +130,9 @@ async function processRequest(vr, job) {
   const jitterMin   = vr.jitter_minutes   || config.worker.jitterMin;
 
   logger.info(`[worker] Заявка #${reqId}: ${vr.country_name} / ${vr.center} (${vr.client_name})`);
+
+  // Фиксируем текущую задачу в worker_status
+  await setCurrentJob(reqId, `${vr.country_name} / ${vr.center} — ${vr.client_name}`);
 
   // Помечаем job как running
   await query(
@@ -228,6 +267,9 @@ async function processRequest(vr, job) {
         `Последняя: ${err.message}`
       ).catch(() => {});
     }
+  } finally {
+    // Всегда снимаем "текущую задачу" — даже если был crash внутри
+    await clearCurrentJob();
   }
 }
 
@@ -293,15 +335,22 @@ async function main() {
 
   await migrate();
 
+  // Сбрасываем застрявшие running статусы и stale current_job
+  await query("UPDATE monitoring_jobs SET status='idle' WHERE status='running'");
+  await clearCurrentJob();
+
+  // Первый heartbeat — объявляем себя живым
+  await heartbeat();
+  // Heartbeat каждые 30 сек
+  setInterval(heartbeat, HEARTBEAT_MS);
+
   const { rows } = await query("SELECT COUNT(*) FROM visa_requests WHERE status='active'");
   const activeCount = parseInt(rows[0].count);
   await notifyWorkerStart(activeCount).catch(() => {});
 
-  // Сбрасываем застрявшие running статусы
-  await query("UPDATE monitoring_jobs SET status='idle' WHERE status='running'");
-
   logger.info(`[worker] Активных заявок: ${activeCount}`);
   logger.info(`[worker] Интервал опроса БД: ${config.worker.pollIntervalMs / 1000} сек`);
+  logger.info(`[worker] Heartbeat: каждые ${HEARTBEAT_MS / 1000} сек`);
 
   await tick().catch(e => logger.error('[worker] Ошибка тика: ' + e.message));
 

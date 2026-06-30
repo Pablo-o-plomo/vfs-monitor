@@ -67,6 +67,7 @@ app.use(requireAuth);
 
 app.use('/',         require('./routes/dashboard'));
 app.use('/clients',  require('./routes/clients'));
+app.use('/api',      require('./routes/api'));        // /api/live — JSON для live-обновлений
 app.use('/',         require('./routes/requests'));   // /clients/:id/requests/…  и /requests/:id
 
 // ─── Обработка ошибок ─────────────────────────────────────────

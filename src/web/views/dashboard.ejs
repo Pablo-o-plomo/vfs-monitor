@@ -1,15 +1,13 @@
 <% title = 'Дашборд' %>
 
-<!-- Статус сервисов -->
+<!-- Статус сервисов (ID нужны для JS-обновления) -->
 <div class="svc-row">
   <div class="svc-chip">
-    <span class="svc-dot <%= svc.worker === 'ok' ? 'green' : svc.worker === 'warn' ? 'yellow' : svc.worker === 'dead' ? 'red' : '' %>"></span>
+    <span id="dot-worker" class="svc-dot <%= svc.worker === 'ok' ? 'green' : svc.worker === 'warn' ? 'yellow' : svc.worker === 'dead' ? 'red' : '' %>"></span>
     Worker
-    <% if (svc.workerAt) { %>
-      <span style="color:var(--text2);font-size:11px">• <%= svc.workerAt %></span>
-    <% } else { %>
-      <span style="color:var(--text2);font-size:11px">• не запускался</span>
-    <% } %>
+    <span id="svc-worker-label" style="color:var(--text2);font-size:11px">
+      <% if (svc.workerAt) { %>• <%= svc.workerAt %><% } else { %>• не запускался<% } %>
+    </span>
   </div>
   <div class="svc-chip">
     <span class="svc-dot <%= svc.db === 'ok' ? 'green' : 'red' %>"></span>
@@ -18,6 +16,9 @@
   <div class="svc-chip">
     <span class="svc-dot <%= svc.telegram === 'ok' ? 'green' : 'red' %>"></span>
     Telegram
+  </div>
+  <div class="svc-chip" style="margin-left:auto">
+    <span id="live-ts" style="color:var(--text2);font-size:11px">live…</span>
   </div>
 </div>
 
@@ -29,15 +30,15 @@
   </div>
   <div class="stat-card green">
     <div class="stat-label">Активных заявок</div>
-    <div class="stat-value"><%= stats.active %></div>
+    <div id="cnt-active" class="stat-value"><%= stats.active %></div>
   </div>
   <div class="stat-card yellow">
     <div class="stat-label">На паузе</div>
-    <div class="stat-value"><%= stats.paused %></div>
+    <div id="cnt-paused" class="stat-value"><%= stats.paused %></div>
   </div>
-  <div class="stat-card" style="<%= stats.error > 0 ? '' : '' %>">
+  <div class="stat-card">
     <div class="stat-label">Ошибок</div>
-    <div class="stat-value" style="color:<%= stats.error > 0 ? 'var(--red)' : 'var(--text2)' %>"><%= stats.error %></div>
+    <div id="cnt-error" class="stat-value" style="color:<%= stats.error > 0 ? 'var(--red)' : 'var(--text2)' %>"><%= stats.error %></div>
   </div>
   <div class="stat-card purple">
     <div class="stat-label">Слотов за 24 ч</div>
@@ -49,7 +50,37 @@
   </div>
 </div>
 
-<!-- Последние слоты -->
+<!-- ── LIVE: текущая задача + очередь ───────────────────────── -->
+<div class="card" style="margin-bottom:20px">
+  <div class="card-header">
+    ⚡ Живая очередь
+    <span id="live-current-badge" style="display:none" class="badge badge-running">проверяет...</span>
+  </div>
+
+  <!-- Текущая задача -->
+  <div id="live-current-job" style="padding:12px 20px;border-bottom:1px solid var(--border);display:none">
+    <span style="color:var(--accent);font-size:13px">🔄 Сейчас:</span>
+    <span id="live-current-desc" style="font-size:13px;margin-left:6px"></span>
+  </div>
+
+  <!-- Очередь -->
+  <div id="live-queue-body">
+    <div class="empty" style="padding:24px">
+      <div class="empty-icon" style="font-size:24px">⏳</div>
+      Загрузка очереди...
+    </div>
+  </div>
+</div>
+
+<!-- ── LIVE: журнал проверок ─────────────────────────────────── -->
+<div class="card" style="margin-bottom:20px">
+  <div class="card-header">📋 Журнал проверок</div>
+  <div id="live-log-body">
+    <div class="empty" style="padding:20px">Загрузка журнала...</div>
+  </div>
+</div>
+
+<!-- Последние найденные слоты -->
 <div class="card">
   <div class="card-header">
     🕐 Последние найденные слоты
@@ -66,12 +97,8 @@
     <table>
       <thead>
         <tr>
-          <th>Дата слота</th>
-          <th>Время</th>
-          <th>Клиент</th>
-          <th>Страна / Центр</th>
-          <th>Категория</th>
-          <th>Найден</th>
+          <th>Дата слота</th><th>Время</th><th>Клиент</th>
+          <th>Страна / Центр</th><th>Категория</th><th>Найден</th>
         </tr>
       </thead>
       <tbody>
@@ -79,9 +106,7 @@
           <tr>
             <td><b><%= s.slot_date %></b></td>
             <td><%= s.slot_time || '—' %></td>
-            <td>
-              <a href="/requests/<%= s.request_id %>" class="link"><%= s.client_name %></a>
-            </td>
+            <td><a href="/requests/<%= s.request_id %>" class="link"><%= s.client_name %></a></td>
             <td><%= s.country_name %> / <%= s.center %></td>
             <td class="meta"><%= s.category %> / <%= s.subcategory %></td>
             <td class="meta"><%= fmt.dt(s.found_at) %></td>
@@ -91,3 +116,143 @@
     </table>
   <% } %>
 </div>
+
+<!-- JS: live-поллинг /api/live каждые 10 сек -->
+<script>
+(function () {
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+  function fmtTime(iso)     { return iso ? new Date(iso).toLocaleTimeString('ru-RU') : '—'; }
+  function fmtDatetime(iso) { return iso ? new Date(iso).toLocaleString('ru-RU') : '—'; }
+  function fmtCountdown(sec) {
+    if (sec == null) return '—';
+    if (sec <= 0)    return '<span style="color:var(--green);font-weight:600">сейчас</span>';
+    if (sec < 60)    return sec + ' сек';
+    var m = Math.floor(sec / 60), s = sec % 60;
+    return s > 0 ? m + ' мин ' + s + ' сек' : m + ' мин';
+  }
+
+  function renderQueue(queue) {
+    if (!queue || !queue.length)
+      return '<div class="empty" style="padding:24px">Нет активных заявок</div>';
+    var rows = '';
+    for (var i = 0; i < queue.length; i++) {
+      var j = queue[i];
+      var sc = j.job_status === 'running' ? 'badge-running' : j.job_status === 'error' ? 'badge-error' : 'badge-idle';
+      var cd = j.job_status === 'running'
+        ? '<span style="color:var(--accent)">▶ проверяется</span>'
+        : fmtCountdown(j.seconds_until);
+      var err = (j.error_count > 0)
+        ? '<span class="badge badge-error" style="margin-left:4px">' + esc(j.error_count) + ' err</span>' : '';
+      rows += '<tr>'
+        + '<td><a href="/requests/' + esc(j.request_id) + '" class="link">' + esc(j.client_name) + '</a></td>'
+        + '<td>' + esc(j.country_name) + ' / ' + esc(j.center) + '</td>'
+        + '<td><span class="badge ' + sc + '">' + esc(j.job_status) + '</span>' + err + '</td>'
+        + '<td>' + cd + '</td>'
+        + '<td class="meta">' + fmtDatetime(j.last_check_at) + '</td>'
+        + '</tr>';
+    }
+    return '<table><thead><tr>'
+      + '<th>Клиент</th>'
+      + '<th>Заявка</th>'
+      + '<th>Статус</th>'
+      + '<th>До проверки</th>'
+      + '<th>Последняя проверка</th>'
+      + '</tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+
+  function renderLog(history) {
+    if (!history || !history.length)
+      return '<div class="empty" style="padding:20px">История появится после первой проверки</div>';
+    var rows = '';
+    for (var i = 0; i < history.length; i++) {
+      var h = history[i];
+      var icon  = h.result === 'slot_found' ? '🟢' : h.result === 'no_slots' ? '○' : '🔴';
+      var color = h.result === 'slot_found' ? 'var(--green)' : h.result === 'no_slots' ? 'var(--text2)' : 'var(--red)';
+      var label = h.result === 'slot_found' ? 'Слот!' : h.result === 'no_slots' ? 'Нет' : 'Ошибка';
+      var errNote = h.error_msg
+        ? '<br><span class="meta" style="font-size:11px;font-family:monospace">' + esc((h.error_msg||'').slice(0,60)) + '</span>' : '';
+      var slotsCell = h.slots_count > 0
+        ? '<span style="color:var(--green);font-weight:600">' + h.slots_count + '</span>' : '—';
+      rows += '<tr>'
+        + '<td class="meta">' + fmtTime(h.checked_at) + '</td>'
+        + '<td><a href="/requests/' + esc(h.request_id) + '" class="link">' + esc(h.client_name) + '</a>'
+        + ' <span class="meta">· ' + esc(h.country_name) + ' / ' + esc(h.center) + '</span></td>'
+        + '<td><span style="color:' + color + '">' + icon + ' ' + label + '</span>' + errNote + '</td>'
+        + '<td>' + slotsCell + '</td>'
+        + '<td class="meta">' + (h.notified ? '✓' : '—') + '</td>'
+        + '</tr>';
+    }
+    return '<table><thead><tr>'
+      + '<th>Время</th>'
+      + '<th>Заявка</th>'
+      + '<th>Результат</th>'
+      + '<th>Слотов</th>'
+      + '<th>Уведомл.</th>'
+      + '</tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+
+  async function refresh() {
+    var data;
+    try {
+      var r = await fetch('/api/live');
+      if (!r.ok) return;
+      data = await r.json();
+    } catch (e) {
+      document.getElementById('live-ts').textContent = '⚠ ошибка соединения';
+      return;
+    }
+
+    document.getElementById('live-ts').textContent =
+      'обновлено ' + new Date(data.ts).toLocaleTimeString('ru-RU');
+
+    var dot = document.getElementById('dot-worker');
+    if (dot) {
+      var cls = data.worker.alive ? 'green' : (data.worker.beat_age_s < 180 ? 'yellow' : 'red');
+      dot.className = 'svc-dot ' + cls;
+    }
+
+    var wl = document.getElementById('svc-worker-label');
+    if (wl) {
+      if (data.worker.last_beat) {
+        var ago = data.worker.beat_age_s;
+        var agoStr = ago < 60 ? ago + 'с' : Math.floor(ago/60) + 'м';
+        wl.textContent = '• pid ' + (data.worker.pid || '?') + ' · бит ' + agoStr + ' назад';
+      } else {
+        wl.textContent = '• не запускался';
+      }
+    }
+
+    if (data.counts) {
+      var setEl = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = (v == null ? '—' : v); };
+      setEl('cnt-active', data.counts.active);
+      setEl('cnt-paused', data.counts.paused);
+      var errEl = document.getElementById('cnt-error');
+      if (errEl) {
+        errEl.textContent = data.counts.error == null ? '—' : data.counts.error;
+        errEl.style.color = parseInt(data.counts.error) > 0 ? 'var(--red)' : 'var(--text2)';
+      }
+    }
+
+    var curJob   = document.getElementById('live-current-job');
+    var curDesc  = document.getElementById('live-current-desc');
+    var curBadge = document.getElementById('live-current-badge');
+    if (data.worker.current_job) {
+      curJob.style.display   = 'block';
+      curBadge.style.display = 'inline-block';
+      curDesc.textContent    = data.worker.current_job.desc;
+    } else {
+      curJob.style.display   = 'none';
+      curBadge.style.display = 'none';
+    }
+
+    document.getElementById('live-queue-body').innerHTML = renderQueue(data.queue);
+    document.getElementById('live-log-body').innerHTML   = renderLog(data.history);
+  }
+
+  refresh();
+  setInterval(refresh, 10000);
+})();
+</script>
