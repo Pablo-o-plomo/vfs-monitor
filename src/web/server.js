@@ -86,4 +86,9 @@ async function start() {
   });
 }
 
-start
+start().catch((e) => {
+  logger.error('[web] Fatal: ' + e.message);
+  process.exit(1);
+});
+
+module.exports = app;
