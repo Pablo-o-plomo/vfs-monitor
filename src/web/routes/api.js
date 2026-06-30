@@ -313,7 +313,6 @@ router.get('/jobs', async (req, res, next) => {
 });
 
 module.exports = router;
-k_at - NOW()))::int AS seconds_until,
         (SELECT COUNT(*) FROM slot_events  se WHERE se.request_id = vr.id) AS slots_found,
         (SELECT COUNT(*) FROM check_history ch WHERE ch.request_id = vr.id) AS checks_done
       FROM visa_requests vr
