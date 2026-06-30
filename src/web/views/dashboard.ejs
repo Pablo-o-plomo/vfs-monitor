@@ -1,6 +1,6 @@
 <% title = 'Дашборд' %>
 
-<!-- Статус сервисов (ID нужны для JS-обновления) -->
+<!-- Статус сервисов -->
 <div class="svc-row">
   <div class="svc-chip">
     <span id="dot-worker" class="svc-dot <%= svc.worker === 'ok' ? 'green' : svc.worker === 'warn' ? 'yellow' : svc.worker === 'dead' ? 'red' : '' %>"></span>
@@ -8,6 +8,16 @@
     <span id="svc-worker-label" style="color:var(--text2);font-size:11px">
       <% if (svc.workerAt) { %>• <%= svc.workerAt %><% } else { %>• не запускался<% } %>
     </span>
+  </div>
+  <div class="svc-chip">
+    <span id="dot-scheduler" class="svc-dot"></span>
+    Scheduler
+    <span id="svc-scheduler-label" style="color:var(--text2);font-size:11px">• проверяем...</span>
+  </div>
+  <div class="svc-chip">
+    <span id="dot-browser" class="svc-dot"></span>
+    Browser
+    <span id="svc-browser-label" style="color:var(--text2);font-size:11px">• проверяем...</span>
   </div>
   <div class="svc-chip">
     <span class="svc-dot <%= svc.db === 'ok' ? 'green' : 'red' %>"></span>
@@ -57,13 +67,11 @@
     <span id="live-current-badge" style="display:none" class="badge badge-running">проверяет...</span>
   </div>
 
-  <!-- Текущая задача -->
   <div id="live-current-job" style="padding:12px 20px;border-bottom:1px solid var(--border);display:none">
     <span style="color:var(--accent);font-size:13px">🔄 Сейчас:</span>
     <span id="live-current-desc" style="font-size:13px;margin-left:6px"></span>
   </div>
 
-  <!-- Очередь -->
   <div id="live-queue-body">
     <div class="empty" style="padding:24px">
       <div class="empty-icon" style="font-size:24px">⏳</div>
@@ -134,22 +142,39 @@
     return s > 0 ? m + ' мин ' + s + ' сек' : m + ' мин';
   }
 
+  // Цвет dot: ok→green, idle→yellow, down/unknown→red, missing→gray
+  function dotClass(status) {
+    if (status === 'ok')      return 'green';
+    if (status === 'idle')    return 'yellow';
+    if (status === 'degraded') return 'yellow';
+    if (status === 'down')    return 'red';
+    return '';
+  }
+
   function renderQueue(queue) {
     if (!queue || !queue.length)
       return '<div class="empty" style="padding:24px">Нет активных заявок</div>';
     var rows = '';
     for (var i = 0; i < queue.length; i++) {
-      var j = queue[i];
-      var sc = j.job_status === 'running' ? 'badge-running' : j.job_status === 'error' ? 'badge-error' : 'badge-idle';
-      var cd = j.job_status === 'running'
+      var j  = queue[i];
+      var st = j.job_state || j.job_status || 'waiting';
+      var sc = st === 'running' ? 'badge-running'
+             : st === 'error'   ? 'badge-error'
+             : st === 'retry'   ? 'badge-error'
+             : 'badge-idle';
+      var label = st === 'running' ? 'работает'
+                : st === 'retry'   ? 'retry #' + esc(j.retry_count)
+                : st === 'error'   ? 'ошибка'
+                : 'ожидание';
+      var cd = st === 'running'
         ? '<span style="color:var(--accent)">▶ проверяется</span>'
         : fmtCountdown(j.seconds_until);
-      var err = (j.error_count > 0)
-        ? '<span class="badge badge-error" style="margin-left:4px">' + esc(j.error_count) + ' err</span>' : '';
+      var errBadge = (j.retry_count > 0 && st !== 'running')
+        ? '<span class="badge badge-error" style="margin-left:4px">' + esc(j.retry_count) + ' retry</span>' : '';
       rows += '<tr>'
         + '<td><a href="/requests/' + esc(j.request_id) + '" class="link">' + esc(j.client_name) + '</a></td>'
         + '<td>' + esc(j.country_name) + ' / ' + esc(j.center) + '</td>'
-        + '<td><span class="badge ' + sc + '">' + esc(j.job_status) + '</span>' + err + '</td>'
+        + '<td><span class="badge ' + sc + '">' + label + '</span>' + errBadge + '</td>'
         + '<td>' + cd + '</td>'
         + '<td class="meta">' + fmtDatetime(j.last_check_at) + '</td>'
         + '</tr>';
@@ -194,6 +219,16 @@
       + '</tr></thead><tbody>' + rows + '</tbody></table>';
   }
 
+  function setDot(id, status) {
+    var el = document.getElementById(id);
+    if (el) el.className = 'svc-dot ' + dotClass(status);
+  }
+
+  function setLabel(id, text) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = text;
+  }
+
   async function refresh() {
     var data;
     try {
@@ -208,38 +243,55 @@
     document.getElementById('live-ts').textContent =
       'обновлено ' + new Date(data.ts).toLocaleTimeString('ru-RU');
 
-    var dot = document.getElementById('dot-worker');
-    if (dot) {
-      var cls = data.worker.alive ? 'green' : (data.worker.beat_age_s < 180 ? 'yellow' : 'red');
-      dot.className = 'svc-dot ' + cls;
+    // ── Чипы сервисов ──
+    var h = data.health || {};
+
+    setDot('dot-worker', h.worker);
+    if (data.worker && data.worker.alive) {
+      var ago = data.worker.beat_age_s;
+      var agoStr = ago < 60 ? ago + 'с' : Math.floor(ago / 60) + 'м';
+      var mem = data.worker.mem_rss_mb ? ' · ' + data.worker.mem_rss_mb + ' MB' : '';
+      setLabel('svc-worker-label', '• pid ' + (data.worker.pid || '?') + ' · ' + agoStr + ' назад' + mem);
+    } else {
+      setLabel('svc-worker-label', '• не запускался');
     }
 
-    var wl = document.getElementById('svc-worker-label');
-    if (wl) {
-      if (data.worker.last_beat) {
-        var ago = data.worker.beat_age_s;
-        var agoStr = ago < 60 ? ago + 'с' : Math.floor(ago/60) + 'м';
-        wl.textContent = '• pid ' + (data.worker.pid || '?') + ' · бит ' + agoStr + ' назад';
-      } else {
-        wl.textContent = '• не запускался';
-      }
+    setDot('dot-scheduler', h.scheduler);
+    setLabel('svc-scheduler-label',
+      h.scheduler === 'ok' ? '• работает' : '• недоступен');
+
+    setDot('dot-browser', h.browser);
+    if (data.browser && data.browser.running) {
+      setLabel('svc-browser-label',
+        '• pid ' + (data.browser.pid || '?') +
+        ' · стр: ' + (data.browser.pages || 0) +
+        ' · проверок: ' + (data.browser.checks || 0));
+    } else if (h.browser === 'idle') {
+      setLabel('svc-browser-label', '• не активен (worker жив)');
+    } else {
+      setLabel('svc-browser-label', '• нет данных');
     }
 
+    // ── Счётчики ──
     if (data.counts) {
-      var setEl = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = (v == null ? '—' : v); };
+      var setEl = function(id, v) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = (v == null ? '—' : v);
+      };
       setEl('cnt-active', data.counts.active);
       setEl('cnt-paused', data.counts.paused);
       var errEl = document.getElementById('cnt-error');
       if (errEl) {
-        errEl.textContent = data.counts.error == null ? '—' : data.counts.error;
-        errEl.style.color = parseInt(data.counts.error) > 0 ? 'var(--red)' : 'var(--text2)';
+        errEl.textContent  = data.counts.error == null ? '—' : data.counts.error;
+        errEl.style.color  = parseInt(data.counts.error) > 0 ? 'var(--red)' : 'var(--text2)';
       }
     }
 
+    // ── Текущая задача ──
     var curJob   = document.getElementById('live-current-job');
     var curDesc  = document.getElementById('live-current-desc');
     var curBadge = document.getElementById('live-current-badge');
-    if (data.worker.current_job) {
+    if (data.worker && data.worker.current_job) {
       curJob.style.display   = 'block';
       curBadge.style.display = 'inline-block';
       curDesc.textContent    = data.worker.current_job.desc;

@@ -5,7 +5,7 @@
 
 const { chromium } = require('playwright-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-const fs = require('fs');
+const fs   = require('fs');
 const path = require('path');
 const logger = require('./logger');
 const config = require('./config');
@@ -15,6 +15,30 @@ chromium.use(StealthPlugin());
 
 let browser = null;
 let context = null;
+
+// ─── Browser Pool State ───────────────────────────────────────────
+let _browserPid       = null;
+let _browserStartedAt = null;
+let _browserChecks    = 0;
+let _openPages        = 0;
+
+/** Состояние browser pool для supervisor (читается из heartbeat) */
+function getBrowserState() {
+  const running = browser !== null &&
+    (typeof browser.isConnected === 'function' ? browser.isConnected() : true);
+  return {
+    running,
+    pid:        _browserPid,
+    pages:      _openPages,
+    checks:     _browserChecks,
+    started_at: _browserStartedAt,
+  };
+}
+
+/** Вызывается из worker после каждой успешной VFS-проверки */
+function incrementBrowserChecks() {
+  _browserChecks++;
+}
 
 /**
  * Человекоподобная задержка (мс)
@@ -35,6 +59,10 @@ async function launchBrowser() {
   if (browser) return;
 
   logger.info('Запуск браузера...');
+  _browserStartedAt = new Date();
+  _browserChecks    = 0;
+  _openPages        = 0;
+
   browser = await chromium.launch({
     headless: true,
     args: [
@@ -58,10 +86,13 @@ async function launchBrowser() {
     },
   });
 
+  // Запоминаем PID браузерного процесса
+  try { _browserPid = browser.process()?.pid || null; } catch (_) { _browserPid = null; }
+
   // Восстанавливаем сессию, если есть
   await loadSession();
 
-  logger.info('Браузер запущен');
+  logger.info('Браузер запущен (PID: ' + (_browserPid || '?') + ')');
 }
 
 /**
@@ -70,7 +101,7 @@ async function launchBrowser() {
 async function saveSession() {
   if (!context) return;
   const cookies = await context.cookies();
-  fs.writeFileSync(config.monitor.sessionFile, JSON.stringify(cookies, null, 2));
+  fs.writeFileSync(config.worker.sessionFile, JSON.stringify(cookies, null, 2));
   logger.info(`Сессия сохранена (${cookies.length} cookies)`);
 }
 
@@ -78,7 +109,7 @@ async function saveSession() {
  * Загрузить cookies из файла в контекст
  */
 async function loadSession() {
-  const file = config.monitor.sessionFile;
+  const file = config.worker.sessionFile;
   if (!fs.existsSync(file)) return;
   try {
     const cookies = JSON.parse(fs.readFileSync(file, 'utf-8'));
@@ -102,6 +133,9 @@ async function newPage() {
     window.chrome = { runtime: {} };
   });
 
+  _openPages++;
+  page.on('close', () => { _openPages = Math.max(0, _openPages - 1); });
+
   return page;
 }
 
@@ -111,8 +145,12 @@ async function newPage() {
 async function closeBrowser() {
   if (browser) {
     await browser.close();
-    browser = null;
-    context = null;
+    browser           = null;
+    context           = null;
+    _browserPid       = null;
+    _browserStartedAt = null;
+    _openPages        = 0;
+    // _browserChecks не сбрасываем — счётчик сессии worker
   }
 }
 
@@ -124,4 +162,6 @@ module.exports = {
   closeBrowser,
   randomDelay,
   sleep,
+  getBrowserState,
+  incrementBrowserChecks,
 };

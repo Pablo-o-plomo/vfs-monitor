@@ -1,14 +1,15 @@
 /**
- * src/worker/index.js — Worker мониторинга
+ * src/worker/index.js — Worker мониторинга (v2 supervisor)
  *
  * Алгоритм:
- * 1. Каждые WORKER_POLL_MS (60 сек) смотрим в БД
- * 2. Берём все active заявки у которых job.next_check_at <= NOW()
- * 3. Пропускаем заявки с work_night=false в ночное время МСК (23:00–07:00)
- * 4. Сортировка: priority DESC, next_check_at ASC
- * 5. Для каждой: vfs.checkSlots() → slot_events + Telegram + check_history
- * 6. Анти-спам: не отправлять больше notify_limit_per_day уведомлений в сутки
- * 7. При ошибке 5+ подряд → заявка переходит в error
+ * 1. Каждые WORKER_POLL_MS смотрим в БД все active заявки с next_check_at <= NOW()
+ * 2. Пропускаем заявки с work_night=false в ночное время МСК (23:00–07:00)
+ * 3. Сортировка: priority DESC, next_check_at ASC
+ * 4. Для каждой: checkSlots() → slot_events + Telegram + check_history
+ * 5. Анти-спам: не отправлять больше notify_limit_per_day уведомлений за 24ч
+ * 6. Retry: ошибка → [5мин, 15мин, 30мин] затем permanent error
+ * 7. Heartbeat каждые 30с: pid, mem, cpu, browser state
+ * 8. При uncaughtException: пишем last_crash в БД, уведомляем, выходим
  */
 
 require('dotenv').config();
@@ -16,35 +17,65 @@ require('dotenv').config();
 const { query, migrate } = require('../db');
 const { checkSlots }     = require('../services/vfs');
 const { notifySlots, notifyWorkerStart, notifyError } = require('../services/notifier');
-const { closeBrowser, sleep } = require('../browser');
+const { closeBrowser, sleep, getBrowserState, incrementBrowserChecks } = require('../browser');
+const { isNightMsk } = require('../utils');
 const logger = require('../logger');
 const config = require('../config');
 
-const MAX_ERRORS      = 5;
-const DEDUP_TTL_MS    = config.worker.dedupTtlMs;
-const HEARTBEAT_MS    = 30_000;   // каждые 30 сек
+const APP_VERSION  = require('../../package.json').version;
+
+const DEDUP_TTL_MS  = config.worker.dedupTtlMs;
+const HEARTBEAT_MS  = 30_000;            // каждые 30 сек
+const RETRY_DELAYS  = [5, 15, 30];       // минуты: 1-я ошибка, 2-я, 3-я; 4-я → permanent
+
 const workerStartedAt = new Date();
 
 // In-memory дедупликация: requestId → Map(slotKey → timestamp)
 const seenSlots = new Map();
 
 // ─────────────────────────────────────────────
-// HEARTBEAT
+// HEARTBEAT (расширенный)
 // ─────────────────────────────────────────────
 
 async function heartbeat() {
   try {
+    const mem    = process.memoryUsage();
+    const cpu    = process.cpuUsage();
+    const bState = getBrowserState();
+
     await query(`
-      INSERT INTO worker_status(id, pid, started_at, last_beat, beat_count)
-      VALUES (1, $1, $2, NOW(), 1)
+      INSERT INTO worker_status(id, pid, started_at, last_beat, beat_count,
+        version, mem_rss_mb, mem_heap_mb, cpu_user_ms, cpu_sys_ms,
+        browser_pid, browser_pages, browser_checks, browser_started_at)
+      VALUES (1, $1, $2, NOW(), 1, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       ON CONFLICT (id) DO UPDATE SET
-        last_beat  = NOW(),
-        beat_count = worker_status.beat_count + 1,
-        pid        = EXCLUDED.pid,
-        started_at = COALESCE(worker_status.started_at, EXCLUDED.started_at)
-    `, [process.pid, workerStartedAt]);
+        last_beat        = NOW(),
+        beat_count       = worker_status.beat_count + 1,
+        pid              = EXCLUDED.pid,
+        started_at       = COALESCE(worker_status.started_at, EXCLUDED.started_at),
+        version          = $3,
+        mem_rss_mb       = $4,
+        mem_heap_mb      = $5,
+        cpu_user_ms      = $6,
+        cpu_sys_ms       = $7,
+        browser_pid      = $8,
+        browser_pages    = $9,
+        browser_checks   = $10,
+        browser_started_at = $11
+    `, [
+      process.pid,
+      workerStartedAt,
+      APP_VERSION,
+      +(mem.rss       / 1024 / 1024).toFixed(2),
+      +(mem.heapUsed  / 1024 / 1024).toFixed(2),
+      Math.floor(cpu.user   / 1000),   // мкс → мс
+      Math.floor(cpu.system / 1000),
+      bState.pid,
+      bState.pages,
+      bState.checks,
+      bState.started_at,
+    ]);
   } catch (e) {
-    // worker_status может не существовать до применения миграции 003
     logger.warn('[worker] heartbeat failed: ' + e.message);
   }
 }
@@ -62,15 +93,11 @@ async function clearCurrentJob() {
   ).catch(() => {});
 }
 
-// ─────────────────────────────────────────────
-// НОЧНОЕ ВРЕМЯ МСК
-// ─────────────────────────────────────────────
-
-function isNightMsk() {
-  // МСК = UTC+3, midnight window: 23:00–07:00
-  const msk  = new Date(Date.now() + 3 * 3600 * 1000);
-  const hour = msk.getUTCHours();
-  return hour >= 23 || hour < 7;
+async function writeCrash(reason) {
+  await query(
+    'UPDATE worker_status SET last_crash_at=NOW(), last_crash_reason=$1 WHERE id=1',
+    [String(reason).slice(0, 500)]
+  ).catch(() => {});
 }
 
 // ─────────────────────────────────────────────
@@ -82,7 +109,6 @@ function isNewSlot(requestId, slot) {
   if (!seenSlots.has(requestId)) seenSlots.set(requestId, new Map());
   const seen = seenSlots.get(requestId);
 
-  // Чистим устаревшие
   for (const [k, ts] of seen.entries()) {
     if (now - ts > DEDUP_TTL_MS) seen.delete(k);
   }
@@ -114,7 +140,6 @@ async function writeHistory({ requestId, jobId, result, slotsCount, notified, er
       VALUES($1,$2,$3,$4,$5,$6)
     `, [requestId, jobId, result, slotsCount || 0, notified || false, errorMsg || null]);
   } catch (e) {
-    // check_history может не существовать на старых деплоях до применения миграции
     logger.warn('[worker] check_history insert failed: ' + e.message);
   }
 }
@@ -124,19 +149,18 @@ async function writeHistory({ requestId, jobId, result, slotsCount, notified, er
 // ─────────────────────────────────────────────
 
 async function processRequest(vr, job) {
-  const reqId      = vr.id;
-  const jobId      = job.id;
+  const reqId       = vr.id;
+  const jobId       = job.id;
   const intervalMin = vr.interval_minutes || config.worker.defaultIntervalMin;
   const jitterMin   = vr.jitter_minutes   || config.worker.jitterMin;
 
   logger.info(`[worker] Заявка #${reqId}: ${vr.country_name} / ${vr.center} (${vr.client_name})`);
 
-  // Фиксируем текущую задачу в worker_status
   await setCurrentJob(reqId, `${vr.country_name} / ${vr.center} — ${vr.client_name}`);
 
-  // Помечаем job как running
+  // Помечаем job как running + state=running
   await query(
-    "UPDATE monitoring_jobs SET status='running' WHERE id=$1",
+    "UPDATE monitoring_jobs SET status='running', state='running' WHERE id=$1",
     [jobId]
   );
 
@@ -150,28 +174,28 @@ async function processRequest(vr, job) {
       dateTo:      vr.date_to,
     });
 
+    // Считаем проверку в browser pool
+    incrementBrowserChecks();
+
     logger.info(`[worker] Заявка #${reqId}: найдено ${slots.length} слотов`);
 
     const newSlots = slots.filter(s => isNewSlot(reqId, s));
     let notified  = false;
-    let msgText   = '';
 
     if (newSlots.length > 0) {
-      logger.info(`[worker] Заявка #${reqId}: ${newSlots.length} новых → проверяем лимит уведомлений`);
+      logger.info(`[worker] Заявка #${reqId}: ${newSlots.length} новых → проверяем лимит`);
 
-      // Лимит уведомлений за сутки (из check_history)
       const limitPerDay = vr.notify_limit_per_day ?? 5;
       const { rows: [{ cnt }] } = await query(`
         SELECT COUNT(*) AS cnt FROM check_history
         WHERE request_id = $1 AND notified = true
-        AND checked_at > NOW() - INTERVAL '24 hours'
+          AND checked_at > NOW() - INTERVAL '24 hours'
       `, [reqId]).catch(() => ({ rows: [{ cnt: '0' }] }));
       const notifToday = parseInt(cnt);
 
       if (notifToday >= limitPerDay) {
-        logger.info(`[worker] Заявка #${reqId}: лимит уведомлений (${notifToday}/${limitPerDay}) — пропускаем Telegram`);
+        logger.info(`[worker] Заявка #${reqId}: лимит (${notifToday}/${limitPerDay})`);
       } else {
-        // Сохраняем slot_events
         const savedEvents = [];
         for (const s of newSlots) {
           const { rows: [ev] } = await query(`
@@ -181,9 +205,8 @@ async function processRequest(vr, job) {
           savedEvents.push(ev);
         }
 
-        // Telegram — основной чат (админ)
         const client  = { name: vr.client_name, phone: vr.client_phone };
-        const request = vr; // все поля заявки уже в vr
+        const request = vr;
 
         try {
           await notifySlots({ client, request, slots: newSlots, requestId: reqId });
@@ -192,7 +215,6 @@ async function processRequest(vr, job) {
           logger.error(`[worker] Telegram admin error: ${tgErr.message}`);
         }
 
-        // Telegram — клиентский чат (если настроен)
         if (vr.notify_client_telegram) {
           try {
             await notifySlots({
@@ -204,8 +226,7 @@ async function processRequest(vr, job) {
           }
         }
 
-        // Сохраняем в таблицу notifications
-        msgText = `${vr.country_name}/${vr.center} — ${newSlots.length} слот(ов)`;
+        const msgText = `${vr.country_name}/${vr.center} — ${newSlots.length} слот(ов)`;
         for (const ev of savedEvents) {
           await query(`
             INSERT INTO notifications(request_id, slot_event_id, channel, message, status)
@@ -215,7 +236,6 @@ async function processRequest(vr, job) {
       }
     }
 
-    // Пишем историю проверки
     await writeHistory({
       requestId: reqId,
       jobId,
@@ -224,23 +244,23 @@ async function processRequest(vr, job) {
       notified,
     });
 
-    // Сбрасываем ошибки, обновляем времена
+    // Успех → сбрасываем retry, ставим waiting
     const nextAt = nextCheckAt(intervalMin, jitterMin);
     await query(`
       UPDATE monitoring_jobs
-      SET status='idle', last_check_at=NOW(), next_check_at=$1,
-          error_count=0, last_error=NULL,
-          total_checks = COALESCE(total_checks,0) + 1
+      SET status='idle', state='waiting', last_check_at=NOW(), next_check_at=$1,
+          error_count=0, last_error=NULL, retry_count=0, retry_at=NULL,
+          total_checks = COALESCE(total_checks, 0) + 1
       WHERE id=$2
     `, [nextAt, jobId]);
 
-    logger.info(`[worker] Заявка #${reqId}: следующая проверка в ${nextAt.toLocaleString('ru-RU')}`);
+    logger.info(`[worker] Заявка #${reqId}: следующая в ${nextAt.toLocaleString('ru-RU')}`);
 
   } catch (err) {
     logger.error(`[worker] Ошибка заявки #${reqId}: ${err.message}`);
 
-    const newErrCount = (job.error_count || 0) + 1;
-    const nextAt = nextCheckAt(intervalMin * 2, jitterMin); // увеличиваем интервал при ошибке
+    const newRetryCount = (job.retry_count || 0) + 1;
+    const isPermanent   = newRetryCount > RETRY_DELAYS.length;
 
     await writeHistory({
       requestId: reqId,
@@ -249,26 +269,44 @@ async function processRequest(vr, job) {
       errorMsg: err.message.slice(0, 500),
     });
 
-    await query(`
-      UPDATE monitoring_jobs
-      SET status='error', last_check_at=NOW(), next_check_at=$1,
-          error_count=$2, last_error=$3,
-          total_checks = COALESCE(total_checks,0) + 1
-      WHERE id=$4
-    `, [nextAt, newErrCount, err.message.slice(0, 500), jobId]);
+    if (isPermanent) {
+      // Перманентная ошибка — заявка → error
+      await query(`
+        UPDATE monitoring_jobs
+        SET status='error', state='error', last_check_at=NOW(),
+            error_count=$1, retry_count=$1, last_error=$2,
+            total_checks = COALESCE(total_checks, 0) + 1
+        WHERE id=$3
+      `, [newRetryCount, err.message.slice(0, 500), jobId]);
 
-    if (newErrCount >= MAX_ERRORS) {
       await query(
         "UPDATE visa_requests SET status='error', updated_at=NOW() WHERE id=$1",
         [reqId]
       );
+
       await notifyError(
-        `Заявка #${reqId} (${vr.client_name} / ${vr.country_name}) → error после ${newErrCount} ошибок.\n` +
-        `Последняя: ${err.message}`
+        `Заявка #${reqId} (${vr.client_name} / ${vr.country_name}) → постоянная ошибка` +
+        ` после ${newRetryCount} попыток.\nПоследняя: ${err.message}`
       ).catch(() => {});
+
+      logger.error(`[worker] Заявка #${reqId}: PERMANENT ERROR после ${newRetryCount} попыток`);
+    } else {
+      // Временная ошибка — ставим retry с задержкой
+      const delayMin = RETRY_DELAYS[newRetryCount - 1];
+      const retryAt  = new Date(Date.now() + delayMin * 60 * 1000);
+
+      await query(`
+        UPDATE monitoring_jobs
+        SET status='error', state='retry', last_check_at=NOW(),
+            next_check_at=$1, retry_at=$1, error_count=$2, retry_count=$2,
+            last_error=$3,
+            total_checks = COALESCE(total_checks, 0) + 1
+        WHERE id=$4
+      `, [retryAt, newRetryCount, err.message.slice(0, 500), jobId]);
+
+      logger.info(`[worker] Заявка #${reqId}: retry #${newRetryCount} через ${delayMin} мин`);
     }
   } finally {
-    // Всегда снимаем "текущую задачу" — даже если был crash внутри
     await clearCurrentJob();
   }
 }
@@ -278,18 +316,18 @@ async function processRequest(vr, job) {
 // ─────────────────────────────────────────────
 
 async function tick() {
-  // Ночной режим: проверяем глобально, нужно ли вообще что-то делать
   const nightMode = isNightMsk();
 
   const { rows } = await query(`
     SELECT vr.*, c.name AS client_name, c.phone AS client_phone,
-           mj.id AS job_id_col, mj.status AS job_status,
+           mj.id AS job_id_col, mj.status AS job_status, mj.state AS job_state,
            mj.error_count, mj.last_error, mj.check_interval_minutes,
-           mj.next_check_at
+           mj.next_check_at, mj.retry_count
     FROM visa_requests vr
-    JOIN clients c ON c.id = vr.client_id
+    JOIN clients c         ON c.id  = vr.client_id
     JOIN monitoring_jobs mj ON mj.request_id = vr.id
     WHERE vr.status = 'active'
+      AND (mj.state IS NULL OR mj.state IN ('waiting', 'retry'))
       AND mj.status != 'running'
       AND mj.next_check_at <= NOW()
     ORDER BY vr.priority DESC, mj.next_check_at ASC
@@ -303,22 +341,22 @@ async function tick() {
   logger.info(`[worker] Tick: ${rows.length} заявок${nightMode ? ' (ночной режим МСК)' : ''}`);
 
   for (const row of rows) {
-    // Ночной режим: пропускаем заявки где work_night=false
     if (nightMode && !row.work_night) {
       logger.info(`[worker] Заявка #${row.id}: ночной режим, пропускаем (work_night=false)`);
       continue;
     }
 
     const job = {
-      id:                    row.job_id_col,
-      status:                row.job_status,
+      id:                     row.job_id_col,
+      status:                 row.job_status,
+      state:                  row.job_state || 'waiting',
       check_interval_minutes: row.check_interval_minutes,
-      error_count:           row.error_count,
-      last_error:            row.last_error,
+      error_count:            row.error_count || 0,
+      retry_count:            row.retry_count || 0,
+      last_error:             row.last_error,
     };
     await processRequest(row, job);
 
-    // Пауза между заявками — 20-40 сек
     const pause = 20_000 + Math.random() * 20_000;
     await sleep(pause);
   }
@@ -331,17 +369,14 @@ async function tick() {
 // ─────────────────────────────────────────────
 
 async function main() {
-  logger.info('[worker] === Adria Travel Monitor Worker стартует ===');
+  logger.info('[worker] === Adria Travel Monitor Worker стартует (v' + APP_VERSION + ') ===');
 
   await migrate();
 
-  // Сбрасываем застрявшие running статусы и stale current_job
-  await query("UPDATE monitoring_jobs SET status='idle' WHERE status='running'");
+  await query("UPDATE monitoring_jobs SET status='idle', state='waiting' WHERE status='running'");
   await clearCurrentJob();
 
-  // Первый heartbeat — объявляем себя живым
   await heartbeat();
-  // Heartbeat каждые 30 сек
   setInterval(heartbeat, HEARTBEAT_MS);
 
   const { rows } = await query("SELECT COUNT(*) FROM visa_requests WHERE status='active'");
@@ -349,7 +384,7 @@ async function main() {
   await notifyWorkerStart(activeCount).catch(() => {});
 
   logger.info(`[worker] Активных заявок: ${activeCount}`);
-  logger.info(`[worker] Интервал опроса БД: ${config.worker.pollIntervalMs / 1000} сек`);
+  logger.info(`[worker] Retry delays: ${RETRY_DELAYS.join(', ')} мин → permanent error`);
   logger.info(`[worker] Heartbeat: каждые ${HEARTBEAT_MS / 1000} сек`);
 
   await tick().catch(e => logger.error('[worker] Ошибка тика: ' + e.message));
@@ -360,12 +395,34 @@ async function main() {
   }, config.worker.pollIntervalMs);
 }
 
+// ─────────────────────────────────────────────
+// CRASH HANDLER
+// ─────────────────────────────────────────────
+
+process.on('uncaughtException', async (err) => {
+  logger.error('[worker] UNCAUGHT EXCEPTION: ' + err.message + '\n' + (err.stack || ''));
+  await writeCrash(err.message || String(err));
+  await notifyError('Worker crash: ' + err.message).catch(() => {});
+  await closeBrowser().catch(() => {});
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  logger.error('[worker] Unhandled Rejection: ' + (reason?.message || String(reason)));
+});
+
 process.on('SIGINT',  async () => { await closeBrowser().catch(() => {}); process.exit(0); });
 process.on('SIGTERM', async () => { await closeBrowser().catch(() => {}); process.exit(0); });
-process.on('unhandledRejection', (e) => logger.error('[worker] Unhandled: ' + e?.message));
 
 main().catch(async (e) => {
   logger.error('[worker] Fatal: ' + e.message);
+  await writeCrash('Fatal start: ' + e.message);
+  await notifyError('Worker fatal: ' + e.message).catch(() => {});
+  process.exit(1);
+});
+
+module.exports = { main };
+sage);
   await notifyError('Worker fatal: ' + e.message).catch(() => {});
   process.exit(1);
 });
