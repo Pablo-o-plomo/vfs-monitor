@@ -313,16 +313,3 @@ router.get('/jobs', async (req, res, next) => {
 });
 
 module.exports = router;
-k_at - NOW()))::int AS seconds_until,
-        (SELECT COUNT(*) FROM slot_events  se WHERE se.request_id = vr.id) AS slots_found,
-        (SELECT COUNT(*) FROM check_history ch WHERE ch.request_id = vr.id) AS checks_done
-      FROM visa_requests vr
-      JOIN clients c         ON c.id  = vr.client_id
-      LEFT JOIN monitoring_jobs mj ON mj.request_id = vr.id
-      ORDER BY vr.priority DESC, vr.created_at DESC
-    `);
-    res.json({ count: rows.length, jobs: rows });
-  } catch (e) { next(e); }
-});
-
-module.exports = router;
