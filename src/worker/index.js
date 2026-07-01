@@ -547,3 +547,10 @@ main().catch(async (err) => {
   await closeBrowser().catch(() => {});
   process.exit(1);
 });
+main().catch(async (err) => {
+  logger.error('[worker] FATAL: ' + err.message + '\n' + (err.stack || ''));
+  await writeCrash(err.message || String(err));
+  await notifyError('Worker fatal: ' + err.message).catch(() => {});
+  await closeBrowser().catch(() => {});
+  process.exit(1);
+});
