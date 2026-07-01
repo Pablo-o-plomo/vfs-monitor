@@ -205,12 +205,15 @@ router.post('/requests/:id/done', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-router.post('/requests/:id/delete', async (req, res, next) => {
+router.post('/requests/:id/clear-error', async (req, res, next) => {
   try {
-    const { rows: [vr] } = await query('SELECT client_id FROM visa_requests WHERE id=$1', [req.params.id]);
-    await query('DELETE FROM visa_requests WHERE id=$1', [req.params.id]);
-    res.redirect(vr ? `/clients/${vr.client_id}` : '/clients');
-  } catch (e) { next(e); }
-});
-
-module.exports = router;
+    await query(`
+      UPDATE monitoring_jobs
+         SET last_error   = NULL,
+             error_count  = 0,
+             retry_count  = 0,
+             retry_at     = NULL,
+             state        = 'waiting',
+             status       = 'idle',
+             next_check_at = NOW()
+       WHERE

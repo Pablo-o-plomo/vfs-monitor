@@ -67,10 +67,19 @@
       <%= vr.error_count || 0 %>
     </span>
   </div>
-  <% if (vr.last_error) { %>
+  <% if (vr.last_error && vr.job_status !== 'running') { %>
   <div class="info-item" style="grid-column:1/-1">
-    <label>Последняя ошибка</label>
-    <span style="color:var(--red);font-size:12px;font-family:monospace"><%= vr.last_error %></span>
+    <label>Последняя ошибка
+      <form action="/requests/<%= vr.id %>/clear-error" method="POST" style="display:inline;margin-left:8px">
+        <button type="submit" class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px">✕ Сбросить</button>
+      </form>
+    </label>
+    <div>
+      <span style="color:var(--red);font-size:13px">Последняя проверка завершилась ошибкой</span>
+      <button type="button" class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px;margin-left:8px"
+        onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none';this.textContent=this.textContent==='Подробнее'?'Скрыть':'Подробнее'">Подробнее</button>
+      <div style="display:none;margin-top:8px;padding:8px;background:var(--bg2);border-radius:6px;font-size:11px;font-family:monospace;color:var(--red);word-break:break-all"><%= vr.last_error %></div>
+    </div>
   </div>
   <% } %>
   <% if (vr.notes) { %>
@@ -226,27 +235,4 @@
 
 <!-- История уведомлений -->
 <div class="card">
-  <div class="card-header">🔔 Уведомления (<%= notifications.length %>)</div>
-  <% if (notifications.length === 0) { %>
-    <div class="empty" style="padding:24px">Уведомлений не было</div>
-  <% } else { %>
-    <table>
-      <thead><tr><th>Канал</th><th>Статус</th><th>Отправлено</th><th>Сообщение</th></tr></thead>
-      <tbody>
-        <% notifications.forEach(n => { %>
-          <tr>
-            <td><%= n.channel %></td>
-            <td><span class="badge badge-<%= n.status %>"><%= n.status %></span></td>
-            <td class="meta"><%= fmt.dt(n.sent_at) %></td>
-            <td class="meta" style="max-width:300px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-              <%= n.message ? n.message.slice(0,80) : '—' %>
-            </td>
-          </tr>
-        <% }) %>
-      </tbody>
-    </table>
-  <% } %>
-</div>
-
-<style>
-.hidden { displ
+  <div class="card-header">🔔 
