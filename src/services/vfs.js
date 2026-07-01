@@ -147,8 +147,10 @@ async function checkSlots(params, onStage = null) {
     if (!page.url().includes('/dashboard')) {
       if (onStage) await onStage('login', 'Авторизация');
       await login(page, baseUrl);
+      if (onStage) await onStage('login', 'Авторизация успешна');
     } else {
       logger.info('[vfs] Сессия активна, пропускаем логин');
+      if (onStage) await onStage('login', 'Сессия активна, вход пропущен');
     }
 
     if (onStage) await onStage('checking_slots', 'Переходим к записи');
