@@ -3,3 +3,6 @@ node_modules/
 session.json
 logs/
 *.log
+
+# Persistent Chrome profile для local-login.js
+.local-profile/
