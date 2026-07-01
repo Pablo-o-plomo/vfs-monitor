@@ -107,4 +107,55 @@ async function notifyError(message) {
   await send(`❌ <b>Monitor Error</b>\n<code>${message}</code>`);
 }
 
-module.exports = { send, notifySlots, notifyWorkerStart, notifyError };
+async function notifyBooked({ client, request, booking, requestId }) {
+  const fmtDate = (d) => {
+    if (!d) return '—';
+    const dt = new Date(d);
+    return `${String(dt.getUTCDate()).padStart(2,'0')}.${String(dt.getUTCMonth()+1).padStart(2,'0')}.${dt.getUTCFullYear()}`;
+  };
+
+  const refStr   = booking.ref  ? `\n🎫 Номер записи: <b>${booking.ref}</b>` : '';
+  const timeStr  = booking.time ? ` в <b>${booking.time}</b>` : '';
+  const phoneStr = client.phone ? `  📞 ${client.phone}` : '';
+  const adminLink = config.publicUrl && requestId
+    ? `\n🔗 <a href="${config.publicUrl}/requests/${requestId}">Открыть заявку →</a>` : '';
+
+  const text = [
+    `✅ <b>Запись оформлена автоматически!</b>`,
+    ``,
+    `👤 <b>${client.name}</b>${phoneStr}`,
+    `🌍 ${request.country_name} — ${request.center}`,
+    `📋 ${request.category} / ${request.subcategory}`,
+    ``,
+    `📅 Дата: <b>${fmtDate(booking.date)}</b>${timeStr}`,
+    refStr,
+    adminLink,
+    ``,
+    `⏱ ${new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })} МСК`,
+  ].join('\n');
+
+  await send(text, config.telegram.chatId);
+  if (request.notify_client_telegram) await send(text, request.notify_client_telegram);
+}
+
+async function notifyBookingFailed({ client, request, slot, reason, requestId }) {
+  const adminLink = config.publicUrl && requestId
+    ? `\n🔗 <a href="${config.publicUrl}/requests/${requestId}">Открыть заявку →</a>` : '';
+
+  const text = [
+    `⚠️ <b>Слот найден, но автозапись не удалась</b>`,
+    ``,
+    `👤 <b>${client.name}</b>`,
+    `🌍 ${request.country_name} — ${request.center}`,
+    `📅 Слот: <b>${slot.date}</b>`,
+    ``,
+    `❌ Причина: <code>${String(reason).slice(0, 200)}</code>`,
+    ``,
+    `Запишитесь вручную на VFS.`,
+    adminLink,
+  ].join('\n');
+
+  await send(text, config.telegram.chatId);
+}
+
+module.exports = { send, notifySlots, notifyWorkerStart, notifyError, notifyBooked, notifyBookingFailed };

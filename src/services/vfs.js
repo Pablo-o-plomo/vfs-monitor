@@ -144,15 +144,23 @@ async function checkSlots(params) {
     // Перехватываем его ДО нажатия «Продолжить»
     const bannerSlots = await parseEarliestSlotBanner(page, dateFrom, dateTo);
     if (bannerSlots.length > 0) {
-      logger.info('[vfs] Слот найден через баннер, возвращаем без перехода к календарю');
-      return bannerSlots;
+      logger.info('[vfs] Слот найден через баннер');
+
+      if (params.autoBook) {
+        logger.info('[vfs] auto_book=true → запускаем автобронирование');
+        const booking = await attemptBooking(page, params, bannerSlots[0].date);
+        return { slots: bannerSlots, booking };
+      }
+
+      logger.info('[vfs] auto_book=false → только уведомление');
+      return { slots: bannerSlots, booking: null };
     }
 
     // ── 6. Ранняя проверка «нет слотов» ──────────────────────────────
     const noSlotsEl = await page.$('text=нет доступных слотов');
     if (noSlotsEl) {
       logger.info('[vfs] Слотов нет (сообщение на шаге выбора)');
-      return [];
+      return { slots: [], booking: null };
     }
 
     // ── 7. Продолжить ─────────────────────────────────────────────────
@@ -179,10 +187,10 @@ async function checkSlots(params) {
     if (!apiCaptured) {
       logger.info('[vfs] API не перехвачен, парсим DOM...');
       const domSlots = await parseDomCalendar(page);
-      return filterByDateRange(domSlots, dateFrom, dateTo);
+      return { slots: filterByDateRange(domSlots, dateFrom, dateTo), booking: null };
     }
 
-    return filterByDateRange(capturedSlots, dateFrom, dateTo);
+    return { slots: filterByDateRange(capturedSlots, dateFrom, dateTo), booking: null };
 
   } finally {
     await page.close();
@@ -445,6 +453,165 @@ async function parseEarliestSlotBanner(page, dateFrom, dateTo) {
   } catch (err) {
     logger.warn(`[worker] Ошибка при поиске баннера слота: ${err.message}`);
     return [];
+  }
+}
+
+// ─────────────────────────────────────────────
+// АВТОБРОНИРОВАНИЕ
+// ─────────────────────────────────────────────
+//
+// Вызывается когда найден слот через баннер И auto_book=true.
+// Браузер уже открыт на странице выбора подкатегории.
+//
+// Шаги:
+//   1. Нажать «Продолжить»
+//   2. Заполнить форму заявителя реальными данными
+//   3. Перейти к календарю
+//   4. Выбрать нужную дату
+//   5. Выбрать первое доступное время
+//   6. Подтвердить запись
+//   7. Извлечь номер записи с confirmation-страницы
+
+async function attemptBooking(page, params, slotDate) {
+  const log = (msg) => logger.info(`[booking] ${msg}`);
+  const warn = (msg) => logger.warn(`[booking] ${msg}`);
+
+  try {
+    // ── 1. Нажать «Продолжить» ──────────────────────────────────────
+    log('Шаг 1: нажимаем «Продолжить»');
+    const continueBtn = page.locator(
+      'button:has-text("Продолжить"), button:has-text("Continue"), button:has-text("Next")'
+    ).first();
+    if (!(await continueBtn.isVisible({ timeout: 5000 }).catch(() => false))) {
+      throw new Error('Кнопка «Продолжить» не найдена после выбора подкатегории');
+    }
+    await continueBtn.click();
+    await randomDelay(1500, 2500);
+
+    // ── 2. Заполнить форму заявителя ────────────────────────────────
+    log('Шаг 2: заполняем форму заявителя');
+    await fillApplicantIfNeeded(page, params);
+
+    // ── 3. Ждём календарь ───────────────────────────────────────────
+    log('Шаг 3: ждём календарь');
+    await page
+      .waitForSelector('.mat-calendar, .calendar, [class*="calendar"]', { timeout: 25_000 })
+      .catch(() => warn('Календарь не найден за 25 сек'));
+    await sleep(2000);
+
+    // ── 4. Выбираем нужную дату ─────────────────────────────────────
+    log(`Шаг 4: выбираем дату ${slotDate}`);
+    const [yyyy, mm, dd] = slotDate.split('-');
+    const targetDay = parseInt(dd, 10);
+
+    // Ищем кнопку с нужным числом в доступных ячейках календаря
+    let dateClicked = false;
+    const calCells = await page.$$('.mat-calendar-body-cell:not(.mat-calendar-body-disabled)');
+    for (const cell of calCells) {
+      const label = await cell.getAttribute('aria-label') || '';
+      const text  = await cell.textContent().then(t => t.trim()).catch(() => '');
+      const dayNum = parseInt(text, 10);
+      if (dayNum === targetDay || label.includes(slotDate) || label.includes(String(targetDay))) {
+        await cell.click();
+        dateClicked = true;
+        log(`Дата ${slotDate} выбрана`);
+        break;
+      }
+    }
+    if (!dateClicked) warn(`Дата ${slotDate} не найдена в календаре — пробуем первую доступную`);
+    await randomDelay(1000, 2000);
+
+    // ── 5. Выбираем первое доступное время ──────────────────────────
+    log('Шаг 5: выбираем время');
+    await page
+      .waitForSelector('[class*="time"], button:has-text(":")', { timeout: 15_000 })
+      .catch(() => warn('Блок времени не появился'));
+    await sleep(1000);
+
+    let appointmentTime = '';
+    const timeSelectors = [
+      '[class*="time-slot"]:not([disabled]):not(.disabled)',
+      'button:has-text(":"):not([disabled])',
+      '.available-slot',
+      '[class*="slot"]:not([disabled])',
+    ];
+    let timeClicked = false;
+    for (const sel of timeSelectors) {
+      const slots = await page.$$(sel);
+      for (const s of slots) {
+        const text = await s.textContent().then(t => t.trim()).catch(() => '');
+        if (/\d{1,2}:\d{2}/.test(text)) {
+          appointmentTime = text;
+          await s.click();
+          timeClicked = true;
+          log(`Время выбрано: ${text}`);
+          break;
+        }
+      }
+      if (timeClicked) break;
+    }
+    if (!timeClicked) warn('Слот времени не найден, продолжаем');
+    await randomDelay(1000, 2000);
+
+    // ── 6. Подтверждаем запись ──────────────────────────────────────
+    log('Шаг 6: подтверждаем запись');
+    const confirmSelectors = [
+      'button:has-text("Подтвердить")',
+      'button:has-text("Confirm")',
+      'button:has-text("Book")',
+      'button:has-text("Submit")',
+      'button:has-text("Забронировать")',
+      'button[type="submit"]',
+    ];
+    let confirmed = false;
+    for (const sel of confirmSelectors) {
+      const btn = page.locator(sel).first();
+      if (await btn.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await btn.click();
+        confirmed = true;
+        log(`Нажата кнопка подтверждения: ${sel}`);
+        break;
+      }
+    }
+    if (!confirmed) warn('Кнопка подтверждения не найдена');
+    await sleep(4000);
+
+    // ── 7. Читаем номер записи с confirmation-страницы ──────────────
+    log('Шаг 7: ищем номер записи');
+    const pageText = await page.evaluate(
+      () => document.body.innerText || document.body.textContent || ''
+    );
+
+    let bookingRef = null;
+    const refPatterns = [
+      /(?:reference|booking|confirmation|ref|запись|номер)[^:\d]*[:#]?\s*([A-Z0-9\-]{6,20})/i,
+      /([A-Z]{2,4}\d{6,12})/,
+      /\b(\d{8,14})\b/,
+    ];
+    for (const p of refPatterns) {
+      const m = pageText.match(p);
+      if (m) { bookingRef = m[1]; break; }
+    }
+    if (bookingRef) log(`Номер записи: ${bookingRef}`);
+    else warn('Номер записи не найден на странице');
+
+    return {
+      success: true,
+      date:  slotDate,
+      time:  appointmentTime || null,
+      ref:   bookingRef,
+      error: null,
+    };
+
+  } catch (err) {
+    warn(`Ошибка автобронирования: ${err.message}`);
+    return {
+      success: false,
+      date:  slotDate,
+      time:  null,
+      ref:   null,
+      error: err.message,
+    };
   }
 }
 

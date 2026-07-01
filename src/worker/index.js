@@ -16,7 +16,7 @@ require('dotenv').config();
 
 const { query, migrate } = require('../db');
 const { checkSlots }     = require('../services/vfs');
-const { notifySlots, notifyWorkerStart, notifyError } = require('../services/notifier');
+const { notifySlots, notifyWorkerStart, notifyError, notifyBooked, notifyBookingFailed } = require('../services/notifier');
 const { closeBrowser, sleep, getBrowserState, incrementBrowserChecks } = require('../browser');
 const { isNightMsk } = require('../utils');
 const logger = require('../logger');
@@ -165,19 +165,27 @@ async function processRequest(vr, job) {
   );
 
   try {
-    const slots = await checkSlots({
+    // Обновляем job_state → slot_found перед запуском
+    await query(
+      "UPDATE monitoring_jobs SET state='running' WHERE id=$1",
+      [jobId]
+    );
+
+    const result = await checkSlots({
       countryCode:    vr.country_code,
       center:         vr.center,
       category:       vr.category,
       subcategory:    vr.subcategory,
       dateFrom:       vr.date_from,
       dateTo:         vr.date_to,
+      autoBook:       vr.auto_book || false,
       firstName:      vr.first_name      || null,
       lastName:       vr.last_name       || null,
       birthDate:      vr.birth_date      || null,
       gender:         vr.gender          || null,
       citizenship:    vr.citizenship     || null,
       passportNum:    vr.passport_num    || null,
+      passportExp:    vr.passport_exp    || null,
       applicantEmail: vr.applicant_email || null,
       applicantPhone: vr.applicant_phone || null,
     });
@@ -185,12 +193,104 @@ async function processRequest(vr, job) {
     // Считаем проверку в browser pool
     incrementBrowserChecks();
 
+    // Поддерживаем обратную совместимость: старый код мог вернуть массив
+    const slots   = Array.isArray(result) ? result : (result.slots   || []);
+    const booking = Array.isArray(result) ? null   : (result.booking || null);
+
     logger.info(`[worker] Заявка #${reqId}: найдено ${slots.length} слотов`);
 
+    // ─── Автобронирование ─────────────────────────────────────────────
+    if (booking) {
+      const client  = { name: vr.client_name, phone: vr.client_phone };
+      const request = vr;
+
+      if (booking.success) {
+        logger.info(`[worker] Заявка #${reqId}: ЗАБРОНИРОВАНО ${booking.date} ${booking.time || ''} ref=${booking.ref || 'нет'}`);
+
+        await query(
+          "UPDATE monitoring_jobs SET state='booked' WHERE id=$1",
+          [jobId]
+        );
+
+        // Сохраняем результат бронирования в visa_requests
+        await query(`
+          UPDATE visa_requests SET
+            appointment_date = $1,
+            appointment_time = $2,
+            booking_ref      = $3,
+            booked_at        = NOW(),
+            status           = 'done',
+            updated_at       = NOW()
+          WHERE id = $4
+        `, [booking.date, booking.time || null, booking.ref || null, reqId]);
+
+        try {
+          await notifyBooked({ client, request, booking, requestId: reqId });
+        } catch (tgErr) {
+          logger.error(`[worker] notifyBooked error: ${tgErr.message}`);
+        }
+
+        await writeHistory({
+          requestId: reqId,
+          jobId,
+          result:   'slot_found',
+          slotsCount: 1,
+          notified: true,
+          errorMsg: null,
+        });
+
+        // Заявка выполнена — больше не мониторим
+        await query(`
+          UPDATE monitoring_jobs
+          SET status='idle', state='booked', last_check_at=NOW(),
+              error_count=0, last_error=NULL,
+              total_checks = COALESCE(total_checks, 0) + 1
+          WHERE id=$1
+        `, [jobId]);
+
+        logger.info(`[worker] Заявка #${reqId}: завершена (статус booked/done)`);
+        return; // выходим из processRequest
+
+      } else {
+        // Бронирование не удалось — уведомляем и продолжаем мониторинг
+        logger.warn(`[worker] Заявка #${reqId}: автобронирование не удалось: ${booking.error}`);
+
+        await query(
+          "UPDATE monitoring_jobs SET state='booking_failed' WHERE id=$1",
+          [jobId]
+        );
+
+        await query(`
+          UPDATE visa_requests SET
+            booking_failed_at    = NOW(),
+            booking_fail_reason  = $1,
+            updated_at           = NOW()
+          WHERE id = $2
+        `, [String(booking.error).slice(0, 500), reqId]);
+
+        try {
+          await notifyBookingFailed({
+            client: { name: vr.client_name, phone: vr.client_phone },
+            request: vr,
+            slot:    { date: booking.date },
+            reason:  booking.error,
+            requestId: reqId,
+          });
+        } catch (tgErr) {
+          logger.error(`[worker] notifyBookingFailed error: ${tgErr.message}`);
+        }
+      }
+    }
+
+    // ─── Обычная обработка слотов (без автобронирования) ──────────────
     const newSlots = slots.filter(s => isNewSlot(reqId, s));
     let notified  = false;
 
     if (newSlots.length > 0) {
+      await query(
+        "UPDATE monitoring_jobs SET state='slot_found' WHERE id=$1",
+        [jobId]
+      );
       logger.info(`[worker] Заявка #${reqId}: ${newSlots.length} новых → проверяем лимит`);
 
       const limitPerDay = vr.notify_limit_per_day ?? 5;
