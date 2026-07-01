@@ -378,25 +378,35 @@ async function checkSlots(params, onStage = null) {
     await logCookieInfo(page);
     logger.info('[vfs] URL после goto dashboard: ' + page.url());
 
+    // Cookies из БД загружены в browser context (browser.js loadSession).
+    // Если VFS всё равно редиректит на /login — cookies невалидны или неполны.
+    // Автологин через Playwright ОТКЛЮЧЁН (CF Turnstile блокирует).
+    // Единственный выход — импортировать свежие cookies вручную.
     if (page.url().includes('/login')) {
-      // Явный редирект на /login — нужна авторизация
-      if (onStage) await onStage('login', 'Авторизация');
-      await login(page, baseUrl);
-      if (onStage) await onStage('login', 'Авторизация успешна');
+      logger.warn('[vfs] Редирект на /login после загрузки cookies — сессия невалидна');
+      const err = new Error(
+        'SESSION_INVALID: cookies ведут на /login — сессия истекла или неполна. ' +
+        'Экспортируйте cookies из браузера через Cookie-Editor и запустите: ' +
+        'node tools/import-cookies.js hun cookies-hun.json'
+      );
+      err.isSessionInvalid = true;
+      throw err;
+    }
+
+    // На /dashboard — проверяем реальную кнопку записи (VFS может вернуть shell без auth)
+    const { ok: sessionOk } = await verifySession(page);
+    if (sessionOk) {
+      if (onStage) await onStage('login', 'Сессия активна');
     } else {
-      // URL выглядит как /dashboard, но VFS может вернуть shell без auth.
-      // Проверяем наличие реальной UI-кнопки "Start New Booking".
-      const { ok: sessionOk } = await verifySession(page);
-      if (sessionOk) {
-        if (onStage) await onStage('login', 'Сессия активна, вход пропущен');
-      } else {
-        const err = new Error(
-          'SESSION_INVALID: VFS session invalid or expired; manual login required. ' +
-          'Import cookies: node tools/import-cookies.js hun cookies-hun.json'
-        );
-        err.isSessionInvalid = true;
-        throw err;
-      }
+      logger.warn('[vfs] Страница /dashboard, но кнопка записи не найдена — сессия нерабочая');
+      const err = new Error(
+        'SESSION_INVALID: VFS открыл /dashboard, но кнопка записи отсутствует — ' +
+        'сессия истекла или неполна. ' +
+        'Экспортируйте cookies из браузера через Cookie-Editor и запустите: ' +
+        'node tools/import-cookies.js hun cookies-hun.json'
+      );
+      err.isSessionInvalid = true;
+      throw err;
     }
 
     if (onStage) await onStage('checking_slots', 'Переходим к форме записи');
@@ -436,24 +446,16 @@ async function checkSlots(params, onStage = null) {
       }
     }
 
-    // Если VFS перекинул на /login — сессия устарела, перелогиниваемся
+    // Если после клика по кнопке VFS вернул /login — сессия истекла на сервере
     if (page.url().includes('/login')) {
-      logger.warn('[vfs] Редирект на /login — сессия устарела, авторизуемся заново');
-      if (onStage) await onStage('login', 'Сессия устарела, авторизуемся заново');
-      await login(page, baseUrl);
-      if (onStage) await onStage('login', 'Авторизация успешна');
-      await randomDelay(1000, 2000);
-      // После перелогина снова пробуем через UI-кнопку
-      const startBtn2 = page.locator(BOOKING_BTN_SEL).first();
-      if (await startBtn2.isVisible({ timeout: 8000 }).catch(() => false)) {
-        const btn2Label = await startBtn2.textContent({ timeout: 2000 }).catch(() => '');
-        logger.info('[vfs] После перелогина. Кнопка: "' + (btn2Label || '').trim() + '"');
-        await startBtn2.click();
-        await randomDelay(1500, 2500);
-        await page.waitForLoadState('networkidle', { timeout: 30_000 }).catch(() => {});
-      } else {
-        await page.goto(`${baseUrl}/book-appointment`, { waitUntil: 'networkidle', timeout: 60_000 });
-      }
+      logger.warn('[vfs] Редирект на /login после клика на кнопку записи — сессия истекла');
+      const err = new Error(
+        'SESSION_INVALID: VFS вернул /login после перехода к форме записи — ' +
+        'сессия истекла. Экспортируйте cookies через Cookie-Editor: ' +
+        'node tools/import-cookies.js hun cookies-hun.json'
+      );
+      err.isSessionInvalid = true;
+      throw err;
     }
 
     logger.info(`[vfs] Форма записи: ${page.url()}`);
