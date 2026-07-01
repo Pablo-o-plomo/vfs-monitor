@@ -99,12 +99,12 @@ async function login(page, baseUrl) {
   // Ждём email-поле в DOM (state:'attached' — не требует видимости в понимании Playwright,
   // нужно т.к. Angular + CF Turnstile могут держать форму с opacity:0/pointer-events:none)
   const EMAIL_SEL = [
+    '#mat-input-0',                            // Angular mat-input — точный ID (надёжнее attr)
     'input[type="email"]',
     'input[name="email"]',
     'input[formcontrolname="email"]',
     'input[formcontrolname="userName"]',
     'input[placeholder*="email" i]',
-    '#mat-input-0',
   ].join(', ');
 
   await page.waitForSelector(EMAIL_SEL, { state: 'attached', timeout: 30_000 });
@@ -119,7 +119,7 @@ async function login(page, baseUrl) {
   await emailInput.fill(config.vfs.email, { force: true });
   await randomDelay(500, 1000);
 
-  const passwordInput = page.locator('input[type="password"]').first();
+  const passwordInput = page.locator('#mat-input-1, input[type="password"]').first();
   await passwordInput.click({ force: true });
   await randomDelay(300, 700);
   await passwordInput.fill(config.vfs.password, { force: true });
@@ -145,11 +145,26 @@ async function login(page, baseUrl) {
   ).first();
   await submitBtn.click({ force: true });
 
-  await page.waitForURL('**/dashboard**', { timeout: 30_000 }).catch(() => {});
+  // Ждём: либо редирект на /dashboard, либо кнопку "Start New Booking"
+  // (оба признака = успешный вход)
+  const START_BTN_LOGIN_SEL = [
+    'button:has-text("Start New Booking")',
+    'button:has-text("Начать новое бронирование")',
+    'button:has-text("Новое бронирование")',
+  ].join(', ');
+
+  await Promise.race([
+    page.waitForURL('**/dashboard**', { timeout: 30_000 }),
+    page.waitForSelector(START_BTN_LOGIN_SEL, { timeout: 30_000 }),
+  ]).catch(() => {});
   await randomDelay(1000, 2000);
 
-  if (page.url().includes('/dashboard')) {
-    logger.info('[vfs] Успешный вход');
+  const onDashboard = page.url().includes('/dashboard');
+  const startBtnAfterLogin = await page.locator(START_BTN_LOGIN_SEL)
+    .isVisible({ timeout: 2000 }).catch(() => false);
+
+  if (onDashboard || startBtnAfterLogin) {
+    logger.info('[vfs] Успешный вход (dashboard=' + onDashboard + ', startBtn=' + startBtnAfterLogin + ')');
     await saveSession();
     return;
   }
@@ -157,7 +172,7 @@ async function login(page, baseUrl) {
   // Не попали на dashboard — CF или другая проблема, но НЕ неверный пароль
   throw new Error(
     'Не удалось войти в VFS Global (не открылся /dashboard). ' +
-    'Возможно, Cloudflare заблокировал вход. Запустите tools/local-login.js.'
+    'Возможно, Cloudflare заблокировал вход. Запустите tools/import-cookies.js.'
   );
 }
 
@@ -293,32 +308,58 @@ async function checkSlots(params, onStage = null) {
       if (onStage) await onStage('login', 'Сессия активна, вход пропущен');
     }
 
-    if (onStage) await onStage('checking_slots', 'Переходим к записи');
+    if (onStage) await onStage('checking_slots', 'Переходим к форме записи');
 
-    // ── 2. Страница записи ────────────────────────────────────────────
-    // Задержка на dashboard — даём Angular инициализировать токены/localStorage
+    // ── 2. Переход к форме записи через UI-кнопку (не прямой URL) ────────────
+    // VFS отдаёт 403201 при прямом goto('/book-appointment').
+    // Правильный путь: кликнуть "Start New Booking" на dashboard, как это делает пользователь.
     await randomDelay(2000, 3500);
-    await page.goto(`${baseUrl}/book-appointment`, { waitUntil: 'networkidle', timeout: 60_000 });
 
-    // Проверяем: VFS иногда возвращает JSON {"code":"403201"} вместо Angular SPA
-    // при прямом переходе — пробуем reload
-    const bodyAfterGoto = await page.evaluate(() => document.body?.innerText || '').catch(() => '');
-    if (bodyAfterGoto.includes('"code"') && bodyAfterGoto.includes('403')) {
-      logger.warn(`[vfs] book-appointment вернул JSON-ошибку: ${bodyAfterGoto.slice(0, 120)}`);
-      logger.info('[vfs] Пробуем reload...');
-      await sleep(2000);
-      await page.reload({ waitUntil: 'networkidle', timeout: 60_000 }).catch(() => {});
+    const START_BTN_SEL = [
+      'button:has-text("Start New Booking")',
+      'button:has-text("Начать новое бронирование")',
+      'button:has-text("Новое бронирование")',
+    ].join(', ');
+
+    const startBtn = page.locator(START_BTN_SEL).first();
+    const startBtnOk = await startBtn.isVisible({ timeout: 10_000 }).catch(() => false);
+
+    if (startBtnOk) {
+      logger.info('[vfs] Найден dashboard, кликаем Start New Booking');
+      logger.info('[vfs] Переход к book-appointment через UI');
+      await startBtn.click();
+      await randomDelay(1500, 2500);
+      await page.waitForLoadState('networkidle', { timeout: 30_000 }).catch(() => {});
+    } else {
+      // Fallback: прямой URL (старое поведение)
+      logger.warn('[vfs] Кнопка Start New Booking не найдена — fallback: прямой URL');
+      await page.goto(`${baseUrl}/book-appointment`, { waitUntil: 'networkidle', timeout: 60_000 });
+
+      // Проверяем 403201 при прямом переходе
+      const bodyAfterGoto = await page.evaluate(() => document.body?.innerText || '').catch(() => '');
+      if (bodyAfterGoto.includes('"code"') && bodyAfterGoto.includes('403')) {
+        logger.warn('[vfs] book-appointment вернул JSON-ошибку: ' + bodyAfterGoto.slice(0, 120));
+        await sleep(2000);
+        await page.reload({ waitUntil: 'networkidle', timeout: 60_000 }).catch(() => {});
+      }
     }
 
     // Если VFS перекинул на /login — сессия устарела, перелогиниваемся
     if (page.url().includes('/login')) {
-      logger.warn(`[vfs] book-appointment → редирект на login, сессия устарела, перелогиниваемся`);
+      logger.warn('[vfs] Редирект на /login — сессия устарела, авторизуемся заново');
       if (onStage) await onStage('login', 'Сессия устарела, авторизуемся заново');
       await login(page, baseUrl);
       if (onStage) await onStage('login', 'Авторизация успешна');
       await randomDelay(1000, 2000);
-      await page.goto(`${baseUrl}/book-appointment`, { waitUntil: 'networkidle', timeout: 60_000 });
-      await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
+      // После перелогина снова пробуем через UI-кнопку
+      const startBtn2 = page.locator(START_BTN_SEL).first();
+      if (await startBtn2.isVisible({ timeout: 8000 }).catch(() => false)) {
+        await startBtn2.click();
+        await randomDelay(1500, 2500);
+        await page.waitForLoadState('networkidle', { timeout: 30_000 }).catch(() => {});
+      } else {
+        await page.goto(`${baseUrl}/book-appointment`, { waitUntil: 'networkidle', timeout: 60_000 });
+      }
     }
 
     logger.info(`[vfs] Форма записи: ${page.url()}`);
@@ -363,10 +404,22 @@ async function checkSlots(params, onStage = null) {
     ).catch(() => {}); // если баннер не появился — продолжаем
     await randomDelay(500, 1000);
 
-    // ── 5а. Баннер «Ближайший доступный слот» ────────────────────────
+    // ── 5а. div.alert — детекция слотов (как в vfs-appointment-bot) ──────────
+    // После выбора подкатегории VFS рендерит alert-блок с ближайшей датой
+    const alertSlots = await parseAlertSlots(page, dateFrom, dateTo, onStage);
+    if (alertSlots.length > 0) {
+      logger.info('[vfs] Слоты найдены через div.alert');
+      if (params.autoBook) {
+        logger.info('[vfs] auto_book=true → запускаем автобронирование');
+        const booking = await attemptBooking(page, params, alertSlots[0].date, onStage);
+        return { slots: alertSlots, booking };
+      }
+      return { slots: alertSlots, booking: null };
+    }
+
+    // ── 5б. Баннер «Ближайший доступный слот» ────────────────────────
     // VFS показывает текст вида:
     // "Ближайший доступный слот для 1 заявителя: 30.07.2026"
-    // Перехватываем его ДО нажатия «Продолжить»
     const bannerSlots = await parseEarliestSlotBanner(page, dateFrom, dateTo, onStage);
     if (bannerSlots.length > 0) {
       logger.info('[vfs] Слот найден через баннер');
@@ -688,6 +741,67 @@ function filterByDateRange(slots, dateFrom, dateTo) {
     const d = new Date(s.date);
     return d >= from && d <= to;
   });
+}
+
+// ─────────────────────────────────────────────
+// ДЕТЕКЦИЯ СЛОТОВ ЧЕРЕЗ div.alert
+// Аналог vfs-appointment-bot: после выбора дропдаунов VFS показывает
+// alert-блок с ближайшей доступной датой.
+// ─────────────────────────────────────────────
+
+async function parseAlertSlots(page, dateFrom, dateTo, onStage) {
+  try {
+    const alertEls = await page.$$('div.alert, .alert-info, .alert-success, [class*="alert"]');
+    if (alertEls.length === 0) return [];
+
+    const slots = [];
+    let noSlotsFound = false;
+
+    for (const el of alertEls) {
+      const text = (await el.textContent().catch(() => '')).trim();
+      if (!text) continue;
+
+      logger.info('[vfs] Найден alert-блок слотов: ' + text.slice(0, 150));
+
+      // Явное "нет слотов"
+      if (/no available|нет доступных|unavailable|not available|no slot/i.test(text)) {
+        noSlotsFound = true;
+        continue;
+      }
+
+      // Ищем дату ISO: YYYY-MM-DD
+      const isoMatch = text.match(/(\d{4}-\d{2}-\d{2})/);
+      if (isoMatch) {
+        logger.info('[vfs] Дата слота найдена в alert (ISO): ' + isoMatch[1]);
+        slots.push({ date: isoMatch[1], time: '', center: '' });
+        continue;
+      }
+
+      // Ищем дату DD.MM.YYYY или DD-MM-YYYY
+      const dmyMatch = text.match(/(\d{2})[.\-](\d{2})[.\-](\d{4})/);
+      if (dmyMatch) {
+        const iso = dmyMatch[3] + '-' + dmyMatch[2] + '-' + dmyMatch[1];
+        logger.info('[vfs] Дата слота найдена в alert (DD.MM.YYYY): ' + iso);
+        slots.push({ date: iso, time: '', center: '' });
+      }
+    }
+
+    if (slots.length > 0) {
+      const inRange = filterByDateRange(slots, dateFrom, dateTo);
+      if (inRange.length > 0) {
+        if (onStage) await onStage('slot_found', 'Слот в alert-блоке: ' + inRange[0].date);
+        if (onStage) await onStage('slot_in_range', 'Слот входит в диапазон дат');
+        return inRange;
+      }
+      if (onStage) await onStage('banner_out_of_range', 'Alert: слот вне диапазона: ' + slots[0].date);
+      return [];
+    }
+
+    return []; // алерты есть, но без распознанных дат
+  } catch (err) {
+    logger.warn('[vfs] parseAlertSlots error: ' + err.message);
+    return [];
+  }
 }
 
 async function parseEarliestSlotBanner(page, dateFrom, dateTo, onStage) {
