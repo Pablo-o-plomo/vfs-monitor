@@ -395,7 +395,7 @@ router.post('/requests/:id/delete', async (req, res, next) => {
 // ─── Артефакты диагностики ─────────────────────────────────────────────────
 
 router.get('/requests/:id/artifacts/:file', (req, res) => {
-  const allowed = ['last-error.png', 'last-error.html'];
+  const allowed = ['last-error.png', 'last-error.html', 'browser-live.jpg', 'browser-live.json'];
   const { id, file } = req.params;
   if (!allowed.includes(file)) return res.status(404).end();
   const absPath = path.resolve(process.cwd(), 'artifacts', `request_${id}`, file);

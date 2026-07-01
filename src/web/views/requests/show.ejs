@@ -211,6 +211,83 @@
   </div>
 </div>
 
+<!-- Мини-браузер (live view Playwright) -->
+<% if (vr.status === 'active') { %>
+<div class="card" id="mini-browser-card" style="margin-bottom:20px">
+  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
+    <span>🖥 Браузер (live)</span>
+    <span id="browser-url" class="meta" style="font-size:11px;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%"></span>
+  </div>
+  <div style="padding:0;background:#0a0a0a;border-radius:0 0 10px 10px;overflow:hidden;position:relative;min-height:200px">
+    <img id="browser-frame"
+      src="/requests/<%= vr.id %>/artifacts/browser-live.jpg"
+      alt="Ожидаем первый кадр..."
+      style="width:100%;display:block;image-rendering:auto;transition:opacity 0.1s"
+      onerror="this.style.opacity='0.2'"
+      onload="this.style.opacity='1'"
+    >
+    <div id="browser-no-data" style="display:none;position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#555;font-size:13px">
+      Ожидаем запуск проверки...
+    </div>
+  </div>
+  <div style="padding:6px 14px;font-size:11px;color:var(--muted);display:flex;justify-content:space-between">
+    <span id="browser-ts"></span>
+    <span>683 × 384 px · ~5 fps</span>
+  </div>
+</div>
+
+<script>
+(function() {
+  var rid = '<%= vr.id %>';
+  var frameEl  = document.getElementById('browser-frame');
+  var urlEl    = document.getElementById('browser-url');
+  var tsEl     = document.getElementById('browser-ts');
+  var lastTs   = 0;
+  var stopped  = false;
+
+  function refreshFrame() {
+    if (stopped || document.hidden) return;
+    frameEl.src = '/requests/' + rid + '/artifacts/browser-live.jpg?t=' + Date.now();
+  }
+
+  function refreshMeta() {
+    if (stopped) return;
+    fetch('/requests/' + rid + '/artifacts/browser-live.json?t=' + Date.now())
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(d) {
+        if (!d) return;
+        if (d.ts !== lastTs) {
+          lastTs = d.ts;
+          var ago = Math.round((Date.now() - d.ts) / 1000);
+          tsEl.textContent = 'Обновлено ' + ago + ' сек. назад';
+        }
+        if (d.url) {
+          var short = d.url.replace(/^https?:\/\/[^\/]+/, '');
+          urlEl.textContent = short || d.url;
+          urlEl.title = d.url;
+        }
+      })
+      .catch(function() {});
+  }
+
+  // Кадры — каждые 500мс, метаданные — каждые 2с
+  var frameTimer = setInterval(refreshFrame, 500);
+  var metaTimer  = setInterval(refreshMeta,  2000);
+  refreshMeta();
+
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) {
+      clearInterval(frameTimer);
+      clearInterval(metaTimer);
+    } else if (!stopped) {
+      frameTimer = setInterval(refreshFrame, 500);
+      metaTimer  = setInterval(refreshMeta,  2000);
+    }
+  });
+})();
+</script>
+<% } %>
+
 <!-- Данные заявителя -->
 <div class="card" style="margin-bottom:20px">
   <div class="card-header">
@@ -536,205 +613,4 @@
 </style>
 
 <script>
-// Быстрая смена города визового центра — адаптируется к выбранной стране
-function setParamsCenter(city) {
-  var countryMap = {
-    hun:'Венгрии', deu:'Германии', fra:'Франции', ita:'Италии', esp:'Испании',
-    grc:'Греции',  cze:'Чехии',   aut:'Австрии', pol:'Польши', svk:'Словакии'
-  };
-  var code = (document.getElementById('params-country') || {}).value || 'hun';
-  var cname = countryMap[code] || 'Венгрии';
-  var el = document.getElementById('params-center');
-  if (el) el.value = 'Визовый центр ' + cname + ',' + city;
-}
-
-(function () {
-  var REQUEST_ID = '<%= vr.id %>';
-
-  var STAGE_ICONS = {
-    start:             '🔄',
-    waiting:           '🟢',
-    opening_vfs:       '🌐',
-    login:             '🔑',
-    selecting_country: '📍',
-    selecting_center:  '📍',
-    selecting_category:'📍',
-    checking_slots:    '🔍',
-    calendar_waiting:  '📅',
-    calendar_open:     '📅',
-    searching_dates:   '🔎',
-    slot_found:          '🎉',
-    slot_in_range:       '✅',
-    banner_out_of_range: '⚠️',
-    banner_error:        '⚠️',
-    no_slots:          '❌',
-    filling_applicant: '👤',
-    selecting_time:    '🕒',
-    confirming:        '✅',
-    booked:            '✅',
-    booking_failed:    '❌',
-    done:              '✅',
-    screenshot:        '📷',
-    url_info:          '🌐',
-    page_info:         '📄',
-    retry:             '🔄',
-    error:             '🚨',
-    running:           '⚙',
-    params_updated:    '⚙️',
-  };
-
-  var STAGE_LABELS = {
-    start:             'Проверка запущена',
-    waiting:           'Ожидает проверки',
-    opening_vfs:       'Открывает VFS',
-    login:             'Авторизация',
-    selecting_country: 'Выбрана страна',
-    selecting_center:  'Выбран центр',
-    selecting_category:'Выбрана категория',
-    checking_slots:    'Переходим к записи',
-    calendar_waiting:  'Ожидает загрузку календаря',
-    calendar_open:     'Календарь открыт',
-    searching_dates:   'Ищет доступные даты',
-    slot_found:          'Найден ближайший слот',
-    slot_in_range:       'Слот в диапазоне дат',
-    banner_out_of_range: 'Слот вне диапазона дат',
-    banner_error:        'Баннер слота: дата не распознана',
-    no_slots:          'Доступных дат нет',
-    filling_applicant: 'Заполняет данные заявителя',
-    selecting_time:    'Выбирает время',
-    confirming:        'Подтверждает запись',
-    booked:            'Запись оформлена',
-    booking_failed:    'Ошибка бронирования',
-    done:              'Проверка завершена',
-    screenshot:        'Скриншот сохранён',
-    url_info:          'URL страницы',
-    page_info:         'Заголовок страницы',
-    retry:             'Повтор через несколько минут',
-    error:             'Ошибка',
-    running:           'Идёт проверка...',
-    params_updated:    'Параметры поиска обновлены',
-  };
-
-  var secondsUntil = null;
-  var timerInterval = null;
-
-  function fmtCountdown(sec) {
-    if (sec == null) return '—';
-    if (sec <= 0) return '<span style="color:var(--green);font-weight:600">⏳ сейчас...</span>';
-    if (sec < 60) return 'через ' + sec + ' сек';
-    var m = Math.floor(sec / 60), s = sec % 60;
-    return 'через ' + m + ' мин ' + (s > 0 ? s + ' сек' : '');
-  }
-
-  function fmtDatetime(iso) {
-    return iso ? new Date(iso).toLocaleString('ru-RU') : '—';
-  }
-
-  function setEl(id, html) {
-    var el = document.getElementById(id);
-    if (el) el.innerHTML = html;
-  }
-  function setTxt(id, txt) {
-    var el = document.getElementById(id);
-    if (el) el.textContent = txt;
-  }
-
-  function startTimer() {
-    if (timerInterval) clearInterval(timerInterval);
-    timerInterval = setInterval(function () {
-      if (secondsUntil != null && secondsUntil > 0) secondsUntil--;
-      setEl('live-timer', fmtCountdown(secondsUntil));
-    }, 1000);
-  }
-
-  async function refresh() {
-    try {
-      var r = await fetch('/api/requests/' + REQUEST_ID + '/live');
-      if (!r.ok) return;
-      var d = await r.json();
-
-      // обновляем таймер
-      secondsUntil = d.seconds_until;
-      setEl('live-timer', fmtCountdown(secondsUntil));
-      setTxt('live-last-check', fmtDatetime(d.last_check_at));
-      setTxt('live-total-checks', d.total_checks || '0');
-
-      var errEl = document.getElementById('live-error-count');
-      if (errEl) {
-        errEl.textContent = d.error_count || '0';
-        errEl.style.color = parseInt(d.error_count) > 0 ? 'var(--red)' : 'inherit';
-      }
-
-      // стадия
-      var stage = d.stage || 'waiting';
-      var icon  = STAGE_ICONS[stage] || '⚙';
-      var label = STAGE_LABELS[stage] || stage;
-
-      setTxt('stage-icon', icon);
-      setTxt('stage-label', label);
-      if (d.stage_updated_at) {
-        setTxt('stage-time', 'с ' + new Date(d.stage_updated_at).toLocaleTimeString('ru-RU'));
-      }
-
-      // цвет блока стадии
-      var stageBlock = document.getElementById('stage-block');
-      if (stageBlock) {
-        if (stage === 'booked')          stageBlock.style.background = 'rgba(34,197,94,0.12)';
-        else if (stage === 'booking_failed' || stage === 'error') stageBlock.style.background = 'rgba(239,68,68,0.10)';
-        else if (stage === 'slot_found' || stage === 'filling_applicant' || stage === 'selecting_time' || stage === 'booking') stageBlock.style.background = 'rgba(59,130,246,0.10)';
-        else if (stage === 'checking_slots' || stage === 'opening_vfs' || stage === 'running') stageBlock.style.background = 'rgba(245,158,11,0.10)';
-        else stageBlock.style.background = 'var(--bg2)';
-      }
-
-      // блок ошибки
-      var errBlock = document.getElementById('live-error-block');
-      if (errBlock) {
-        if (d.last_error && d.job_status !== 'running') {
-          errBlock.style.display = 'block';
-          var errDetail = document.getElementById('live-error-detail');
-          if (errDetail) errDetail.textContent = d.last_error;
-        } else {
-          errBlock.style.display = 'none';
-        }
-      }
-
-      // лог активности
-      if (d.stage_log) renderActivityLog(d.stage_log);
-
-      setTxt('live-updated', 'обновлено ' + new Date().toLocaleTimeString('ru-RU'));
-
-    } catch (e) {
-      setTxt('live-updated', '⚠ ошибка');
-    }
-  }
-
-  function renderActivityLog(log) {
-    var el = document.getElementById('activity-log');
-    if (!el) return;
-    if (!log || !log.length) {
-      el.innerHTML = '<div class="meta" style="font-size:13px">Лог появится после запуска проверки.</div>';
-      return;
-    }
-    var html = '<div style="font-family:monospace;font-size:13px;line-height:1.9">';
-    log.forEach(function(entry) {
-      var t  = new Date(entry.logged_at).toLocaleTimeString('ru-RU');
-      var ic = STAGE_ICONS[entry.stage] || '·';
-      var msg = entry.message || entry.stage || '';
-      html += '<div style="display:flex;gap:10px">'
-            + '<span class="meta" style="flex-shrink:0;min-width:70px">' + t + '</span>'
-            + '<span style="flex-shrink:0">' + ic + '</span>'
-            + '<span>' + msg + '</span>'
-            + '</div>';
-    });
-    html += '</div>';
-    el.innerHTML = html;
-    // Автоскролл к последней записи
-    el.scrollTop = el.scrollHeight;
-    setTxt('log-updated', 'обновлено ' + new Date().toLocaleTimeString('ru-RU'));
-  }
-
-  startTimer();
-  refresh();
-  setInterval(refresh, 5000);
-})();
-</script>
+// Быстрая смена города визового центра 

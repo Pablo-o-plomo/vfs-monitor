@@ -96,6 +96,49 @@ async function saveErrorArtifacts(page, requestId) {
 }
 
 // ─────────────────────────────────────────────
+// МИНИ-БРАУЗЕР — CDP screencast для admin panel
+// ─────────────────────────────────────────────
+
+async function startLiveScreencast(page, requestId) {
+  if (!requestId) return null;
+  try {
+    const dir = path.join(process.cwd(), 'artifacts', `request_${requestId}`);
+    fs.mkdirSync(dir, { recursive: true });
+
+    const client = await page.context().newCDPSession(page);
+    await client.send('Page.startScreencast', {
+      format: 'jpeg',
+      quality: 65,
+      maxWidth: 683,
+      maxHeight: 384,
+    });
+
+    client.on('Page.screencastFrame', async ({ data, sessionId }) => {
+      try {
+        // Подтверждаем получение кадра (иначе Chrome прекратит отправку)
+        await client.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
+        // Записываем JPEG на диск
+        fs.writeFileSync(
+          path.join(dir, 'browser-live.jpg'),
+          Buffer.from(data, 'base64'),
+        );
+        // Обновляем метаданные (URL, время)
+        fs.writeFileSync(
+          path.join(dir, 'browser-live.json'),
+          JSON.stringify({ url: page.url(), ts: Date.now() }),
+        );
+      } catch (_) { /* не критично */ }
+    });
+
+    logger.info('[vfs] Live screencast запущен');
+    return client;
+  } catch (e) {
+    logger.warn('[vfs] Не удалось запустить screencast: ' + e.message);
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────
 // ГЛАВНАЯ ФУНКЦИЯ — принимает params из БД
 // ─────────────────────────────────────────────
 
@@ -117,6 +160,9 @@ async function checkSlots(params, onStage = null) {
   const page = await newPage();
   const capturedSlots = [];
   let apiCaptured = false;
+
+  // Запускаем live screencast для admin panel (мини-браузер)
+  const _screencastClient = await startLiveScreencast(page, requestId);
 
   // Перехватываем JSON-ответы с доступностью слотов
   page.on('response', async (response) => {
@@ -283,6 +329,9 @@ async function checkSlots(params, onStage = null) {
     }
     throw err;
   } finally {
+    if (_screencastClient) {
+      await _screencastClient.send('Page.stopScreencast').catch(() => {});
+    }
     await page.close();
   }
 }
@@ -800,55 +849,47 @@ async function attemptBooking(page, params, slotDate, onStage = null) {
     const confirmBtn = page
       .locator('button:has-text("Подтвердить"), button:has-text("Confirm")')
       .first();
-    if (await confirmBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+        if (await confirmBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
       await confirmBtn.click();
       confirmed = true;
-      log('Нажата кнопка "Подтвердить"');
+      log('Кнопка «Подтвердить» нажата');
     }
-    if (!confirmed) warn('Кнопка подтверждения не найдена');
+
     await sleep(4000);
 
-    // Проверяем ошибку «слот занят» (VFS показывает English-баннер)
-    const afterConfirmText = await page.evaluate(() => document.body.innerText || '');
+    // Детектируем ошибку «слот уже занят»
+    const afterConfirmText = await page.evaluate(() => document.body.innerText || '').catch(() => '');
     if (
       afterConfirmText.includes('all appointments are scheduled in this slot') ||
       afterConfirmText.includes('select different date and time')
     ) {
-      warn('Слот был занят в момент подтверждения');
+      warn('Слот занят — другой заявитель успел раньше');
       return { success: false, date: slotDate, time: appointmentTime, ref: null, error: 'slot_taken' };
     }
 
-    // ── 7. Читаем номер записи с confirmation-страницы ──────────────
-    log('Шаг 7: ищем номер записи');
-    const pageText = await page.evaluate(
-      () => document.body.innerText || document.body.textContent || ''
-    );
+    // Детектируем подтверждение брони (номер ссылки)
+    const refMatch = afterConfirmText.match(/[A-Z]{2,6}\d{6,12}|#[\w-]{8,20}/);
+    const bookingRef = refMatch ? refMatch[0] : null;
 
-    let bookingRef = null;
-    const refPatterns = [
-      /(?:reference|booking|confirmation|ref|запись|номер)[^:\d]*[:#]?\s*([A-Z0-9\-]{6,20})/i,
-      /([A-Z]{2,4}\d{6,12})/,
-      /\b(\d{8,14})\b/,
-    ];
-    for (const p of refPatterns) {
-      const m = pageText.match(p);
-      if (m) { bookingRef = m[1]; break; }
+    if (!confirmed) {
+      warn('Кнопка «Подтвердить» не найдена — возможно бронирование не завершено');
+      return { success: false, date: slotDate, time: appointmentTime, ref: null, error: 'confirm_btn_missing' };
     }
-    if (bookingRef) log(`Номер записи: ${bookingRef}`);
-    else warn('Номер записи не найден на странице');
 
-    return {
-      success: true,
-      date:  slotDate,
-      time:  appointmentTime || null,
-      ref:   bookingRef,
-      error: null,
-    };
+    log(`Бронирование завершено! Дата: ${slotDate}, время: ${appointmentTime}, ref: ${bookingRef}`);
+    return { success: true, date: slotDate, time: appointmentTime, ref: bookingRef, error: null };
 
   } catch (err) {
-    warn(`Ошибка автобронирования: ${err.message}`);
-    return { success: false, date: slotDate, time: null, ref: null, error: err.message };
+    warn('Ошибка при бронировании: ' + err.message);
+    await saveErrorArtifacts(page, params.requestId).catch(() => {});
+    return { success: false, date: null, time: null, ref: null, error: err.message };
+  } finally {
+    // Страница закрывается в checkSlots
   }
 }
+
+// ─────────────────────────────────────────────
+// ЭКСПОРТ
+// ─────────────────────────────────────────────
 
 module.exports = { checkSlots };
