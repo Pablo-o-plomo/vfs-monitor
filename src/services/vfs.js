@@ -81,21 +81,29 @@ async function login(page, baseUrl) {
   // Cloudflare Turnstile (если есть) — пробуем решить до заполнения формы
   await handleCloudflare(page);
 
-  // Ждём email-поле; расширенный набор селекторов для VFS Angular
-  const emailInput = page.locator(
-    'input[type="email"], input[name="email"], input[formcontrolname="email"], input[formcontrolname="userName"], #mat-input-0'
-  ).first();
-  await emailInput.waitFor({ timeout: 30_000 });
+  // Ждём email-поле в DOM (state:'attached' — не требует видимости в понимании Playwright,
+  // нужно т.к. Angular + CF Turnstile могут держать форму с opacity:0/pointer-events:none)
+  const EMAIL_SEL = [
+    'input[type="email"]',
+    'input[name="email"]',
+    'input[formcontrolname="email"]',
+    'input[formcontrolname="userName"]',
+    'input[placeholder*="email" i]',
+    '#mat-input-0',
+  ].join(', ');
+
+  await page.waitForSelector(EMAIL_SEL, { state: 'attached', timeout: 30_000 });
+  const emailInput = page.locator(EMAIL_SEL).first();
   await randomDelay(400, 800);
-  await emailInput.click();
+  await emailInput.click({ force: true });
   await randomDelay(300, 600);
-  await emailInput.fill(config.vfs.email);
+  await emailInput.fill(config.vfs.email, { force: true });
   await randomDelay(400, 900);
 
   const passwordInput = page.locator('input[type="password"]').first();
-  await passwordInput.click();
+  await passwordInput.click({ force: true });
   await randomDelay(300, 700);
-  await passwordInput.fill(config.vfs.password);
+  await passwordInput.fill(config.vfs.password, { force: true });
   await randomDelay(600, 1200);
 
   const submitBtn = page.locator(
