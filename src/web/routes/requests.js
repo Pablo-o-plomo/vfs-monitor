@@ -208,4 +208,9 @@ router.post('/requests/:id/done', async (req, res, next) => {
 router.post('/requests/:id/delete', async (req, res, next) => {
   try {
     const { rows: [vr] } = await query('SELECT client_id FROM visa_requests WHERE id=$1', [req.params.id]);
-    await query('DELETE FROM v
+    await query('DELETE FROM visa_requests WHERE id=$1', [req.params.id]);
+    res.redirect(vr ? `/clients/${vr.client_id}` : '/clients');
+  } catch (e) { next(e); }
+});
+
+module.exports = router;
