@@ -47,7 +47,7 @@ app.use((req, res, next) => {
       const mon = String(dt.getUTCMonth() + 1).padStart(2, '0');
       return `${day}.${mon}.${dt.getUTCFullYear()}`;
     },
-    dt: (d) => d ? new Date(d).toLocaleString('ru-RU') : '—',
+    dt: (d) => d ? new Date(d).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' }) : '—',
   };
   next();
 });
@@ -85,13 +85,4 @@ async function start() {
   const PORT = process.env.PORT || config.admin.port || 3000;
 
   app.listen(PORT, '0.0.0.0', () => {
-    logger.info(`[web] Admin panel listening on port ${PORT}`);
-  });
-}
-
-start().catch((e) => {
-  logger.error('[web] Fatal: ' + e.message);
-  process.exit(1);
-});
-
-module.exports = app;
+ 
