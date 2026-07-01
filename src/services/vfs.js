@@ -181,16 +181,28 @@ async function checkSlots(params, onStage = null) {
     logger.info(`[vfs] Выбираем подкатегорию: ${subcategory}`);
     if (onStage) await onStage('selecting_category', `Выбрана категория: ${subcategory}`);
     await selectDropdownByText(page, subcategory, 'Выберите подкатегорию');
-    await randomDelay(1500, 2500); // даём Angular обновить DOM
+
+    // Ждём появления баннера слота или сообщения «нет слотов» от VFS
+    // Angular обновляет DOM асинхронно, случайной задержки недостаточно
+    await page.waitForFunction(
+      () => {
+        const t = document.body.innerText || '';
+        return t.includes('Ближайший доступный слот') ||
+               t.includes('Nearest available slot') ||
+               t.includes('нет доступных слотов') ||
+               t.includes('No available slots');
+      },
+      { timeout: 8000 }
+    ).catch(() => {}); // если баннер не появился — продолжаем
+    await randomDelay(500, 1000);
 
     // ── 5а. Баннер «Ближайший доступный слот» ────────────────────────
     // VFS показывает текст вида:
-    // "Ближайший доступный слот для 1 заявителя: 21.07.2026"
+    // "Ближайший доступный слот для 1 заявителя: 30.07.2026"
     // Перехватываем его ДО нажатия «Продолжить»
-    const bannerSlots = await parseEarliestSlotBanner(page, dateFrom, dateTo);
+    const bannerSlots = await parseEarliestSlotBanner(page, dateFrom, dateTo, onStage);
     if (bannerSlots.length > 0) {
       logger.info('[vfs] Слот найден через баннер');
-      if (onStage) await onStage('slot_found', `Найден слот ${bannerSlots[0].date}`);
 
       if (params.autoBook) {
         logger.info('[vfs] auto_book=true → запускаем автобронирование');
@@ -457,13 +469,13 @@ function filterByDateRange(slots, dateFrom, dateTo) {
 }
 
 // БАННЕР «БЛИЖАЙШИЙ ДОСТУПНЫЙ СЛОТ»
-async function parseEarliestSlotBanner(page, dateFrom, dateTo) {
+async function parseEarliestSlotBanner(page, dateFrom, dateTo, onStage = null) {
   try {
     const bodyText = await page.evaluate(
       () => document.body.innerText || document.body.textContent || ''
     );
 
-    logger.info('[worker] Сканируем страницу на наличие баннера слота...');
+    logger.info('[vfs] Сканируем страницу на наличие баннера слота...');
 
     const patterns = [
       /[Бб]лижайший\s+доступный\s+слот[^:]*:\s*(\d{2}\.\d{2}\.\d{4})/i,
@@ -486,34 +498,41 @@ async function parseEarliestSlotBanner(page, dateFrom, dateTo) {
     }
 
     if (!rawDate) {
-      logger.info('[worker] Баннер ближайшего слота не найден на странице');
+      logger.info('[vfs] Баннер ближайшего слота не найден на странице');
       return [];
     }
 
-    logger.info(`[worker] Найден текст слота: "${matchedText}"`);
+    logger.info(`[vfs] Найден текст слота: "${matchedText}"`);
 
     const [dd, mm, yyyy] = rawDate.split('.');
     if (!dd || !mm || !yyyy) {
-      logger.warn(`[worker] Не удалось разобрать дату слота: ${rawDate}`);
+      logger.warn(`[vfs] Не удалось разобрать дату слота: ${rawDate}`);
+      if (onStage) await onStage('banner_error', `Баннер слота найден, но дата не распознана: ${rawDate}`);
       return [];
     }
-    const isoDate = `${yyyy}-${mm}-${dd}`;
-    logger.info(`[worker] Извлечена дата слота: ${isoDate}`);
+    const isoDate  = `${yyyy}-${mm}-${dd}`;
+    const humanDate = rawDate; // DD.MM.YYYY — для читаемых сообщений
+    logger.info(`[vfs] Извлечена дата слота: ${isoDate}`);
 
     const slotDate = new Date(isoDate);
     const from = new Date(dateFrom);
-    const to = new Date(dateTo);
+    const to   = new Date(dateTo);
     const inRange = slotDate >= from && slotDate <= to;
 
-    logger.info(`[worker] Дата входит в диапазон [${dateFrom} — ${dateTo}]: ${inRange ? 'YES' : 'NO'}`);
+    logger.info(`[vfs] Дата входит в диапазон [${dateFrom} — ${dateTo}]: ${inRange ? 'YES' : 'NO'}`);
 
-    if (!inRange) return [];
+    if (!inRange) {
+      if (onStage) await onStage('banner_out_of_range', `Ближайший слот вне диапазона: ${humanDate}`);
+      return [];
+    }
 
-    logger.info(`[worker] Слот сохранён: ${isoDate}`);
+    if (onStage) await onStage('slot_found', `Найден ближайший слот: ${humanDate}`);
+    if (onStage) await onStage('slot_in_range', 'Слот подходит по диапазону дат');
+    logger.info(`[vfs] Слот сохранён: ${isoDate}`);
     return [{ date: isoDate, time: '', center: '' }];
 
   } catch (err) {
-    logger.warn(`[worker] Ошибка при поиске баннера слота: ${err.message}`);
+    logger.warn(`[vfs] Ошибка при поиске баннера слота: ${err.message}`);
     return [];
   }
 }
@@ -639,7 +658,7 @@ async function attemptBooking(page, params, slotDate, onStage = null) {
       }
     }
     if (!confirmed) warn('Кнопка подтверждения не найдена');
-    await sleep(4000);
+        await sleep(4000);
 
     // ── 7. Читаем номер записи с confirmation-страницы ──────────────
     log('Шаг 7: ищем номер записи');
