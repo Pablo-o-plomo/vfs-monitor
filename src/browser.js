@@ -96,27 +96,81 @@ async function launchBrowser() {
 }
 
 /**
- * Сохранить cookies текущего контекста в файл
+ * Сохранить cookies в БД (основное) + файл (резерв).
+ * БД — shared storage между Railway web и worker контейнерами.
  */
 async function saveSession() {
   if (!context) return;
   const cookies = await context.cookies();
-  fs.writeFileSync(config.worker.sessionFile, JSON.stringify(cookies, null, 2));
-  logger.info(`Сессия сохранена (${cookies.length} cookies)`);
+  const json = JSON.stringify(cookies, null, 2);
+
+  // Файл (резерв / локальное использование)
+  try {
+    fs.writeFileSync(config.worker.sessionFile, json);
+    logger.info(`Сессия сохранена в файл (${cookies.length} cookies)`);
+  } catch (e) {
+    logger.warn('Не удалось сохранить сессию в файл: ' + e.message);
+  }
+
+  // БД (Railway: worker перезапускается, файл теряется → только БД надёжна)
+  try {
+    const { query } = require('./db');
+    await query(
+      `INSERT INTO vfs_sessions (country_code, cookies_json, saved_at, saved_by)
+       VALUES ('hun', $1, NOW(), 'worker')`,
+      [json],
+    );
+    // Держим только 3 последних сессии
+    await query(
+      `DELETE FROM vfs_sessions WHERE id NOT IN (
+         SELECT id FROM vfs_sessions ORDER BY saved_at DESC LIMIT 3
+       )`,
+    );
+    logger.info(`Сессия сохранена в БД`);
+  } catch (e) {
+    logger.warn('Не удалось сохранить сессию в БД: ' + e.message);
+  }
 }
 
 /**
- * Загрузить cookies из файла в контекст
+ * Загрузить cookies: сначала из БД (свежее), затем из файла.
  */
 async function loadSession() {
-  const file = config.worker.sessionFile;
-  if (!fs.existsSync(file)) return;
+  let cookies = null;
+
+  // Пробуем БД
   try {
-    const cookies = JSON.parse(fs.readFileSync(file, 'utf-8'));
-    await context.addCookies(cookies);
-    logger.info(`Сессия загружена (${cookies.length} cookies)`);
+    const { query } = require('./db');
+    const { rows } = await query(
+      `SELECT cookies_json, saved_at FROM vfs_sessions
+       ORDER BY saved_at DESC LIMIT 1`,
+    );
+    if (rows.length > 0) {
+      cookies = JSON.parse(rows[0].cookies_json);
+      const ageSec = Math.floor((Date.now() - new Date(rows[0].saved_at).getTime()) / 1000);
+      logger.info('Сессия загружена из БД (' + cookies.length + ' cookies, возраст ' + Math.floor(ageSec/3600) + 'ч)');
+    }
   } catch (e) {
-    logger.warn('Не удалось загрузить сессию: ' + e.message);
+    logger.warn('Не удалось загрузить сессию из БД: ' + e.message);
+  }
+
+  // Резерв: файл
+  if (!cookies) {
+    const file = config.worker.sessionFile;
+    if (fs.existsSync(file)) {
+      try {
+        cookies = JSON.parse(fs.readFileSync(file, 'utf-8'));
+        logger.info('Сессия загружена из файла (' + cookies.length + ' cookies)');
+      } catch (e) {
+        logger.warn('Не удалось загрузить сессию из файла: ' + e.message);
+      }
+    }
+  }
+
+  if (cookies && cookies.length > 0) {
+    await context.addCookies(cookies).catch(e =>
+      logger.warn('addCookies error: ' + e.message)
+    );
   }
 }
 
@@ -127,7 +181,6 @@ async function newPage() {
   if (!context) await launchBrowser();
   const page = await context.newPage();
 
-  // Скрываем webdriver-флаги дополнительно
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
     window.chrome = { runtime: {} };
@@ -150,7 +203,6 @@ async function closeBrowser() {
     _browserPid       = null;
     _browserStartedAt = null;
     _openPages        = 0;
-    // _browserChecks не сбрасываем — счётчик сессии worker
   }
 }
 

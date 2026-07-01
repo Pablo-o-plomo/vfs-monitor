@@ -211,6 +211,36 @@
   </div>
 </div>
 
+
+<!-- CF Turnstile: требуется ручной вход -->
+<div id="manual-login-card" style="display:none;margin-bottom:20px;border:2px solid #f90;border-radius:10px;overflow:hidden">
+  <div style="background:rgba(255,153,0,0.15);border-bottom:1px solid #f90;padding:12px 18px;display:flex;align-items:center;gap:10px">
+    <span style="font-size:24px">⚠️</span>
+    <span style="font-size:16px;font-weight:700;color:#f90">Требуется ручной вход в VFS Global</span>
+  </div>
+  <div style="padding:16px 20px">
+    <p style="margin:0 0 12px;font-size:14px;line-height:1.6">
+      Cloudflare Turnstile заблокировал автоматический вход.
+      Войдите вручную через локальный браузер — сессия сохранится в БД, и Railway worker продолжит работу.
+    </p>
+    <div style="background:var(--bg2);border-radius:8px;padding:14px 16px;font-size:13px;margin-bottom:14px">
+      <b>Инструкция:</b>
+      <ol style="margin:8px 0 0;padding-left:18px;line-height:2.2">
+        <li>Откройте терминал в папке проекта <code>vfs-monitor</code></li>
+        <li>Выполните: <code style="background:var(--bg);padding:2px 7px;border-radius:4px;font-size:12px">node tools/local-login.js</code></li>
+        <li>В открывшемся браузере войдите в VFS вручную (решите Cloudflare)</li>
+        <li>Вернитесь в терминал — нажмите Enter (или подождите авто-сохранения)</li>
+        <li>Нажмите кнопку ниже</li>
+      </ol>
+    </div>
+    <form action="/requests/<%= vr.id %>/check-now" method="POST">
+      <button type="submit" class="btn btn-primary">
+        ✅ Сессия обновлена — Запустить проверку
+      </button>
+    </form>
+  </div>
+</div>
+
 <!-- Мини-браузер (live view Playwright) -->
 <% if (vr.status === 'active') { %>
 <div class="card" id="mini-browser-card" style="margin-bottom:20px">
@@ -612,5 +642,146 @@
 </style>
 
 <script>
-// Быстрая смена города визового центра — адаптируется к выбранной стране
-function set
+// Быстрая смена города центра
+function setParamsCenter(city) {
+  var inp = document.getElementById('params-center');
+  if (inp) inp.value = city;
+}
+
+// ── Live-поллинг заявки ─────────────────────────────────────────────────────
+(function() {
+  var rid = '<%= vr.id %>';
+
+  var ICONS = {
+    waiting: '⏳', opening_vfs: '🌐', login: '🔐',
+    login_manual_required: '⚠️',
+    selecting_country: '🌍', selecting_center: '📍', selecting_category: '📋',
+    checking_slots: '🔍', calendar_waiting: '📅', calendar_open: '📅',
+    searching_dates: '🔍', slot_found: '🎉', no_slots: '😔',
+    banner_out_of_range: '📅', slot_in_range: '🎉', banner_error: '⚠️',
+    filling_applicant: '📝', selecting_time: '⏰', confirming: '✅',
+    booked: '🎉', booking_failed: '❌', done: '✓',
+    error: '❌', retry: '🔄', running: '⚙️', start: '▶',
+    screenshot: '📷', url_info: '🔗', page_info: '📄',
+  };
+
+  var stageBlock      = document.getElementById('stage-block');
+  var stageIcon       = document.getElementById('stage-icon');
+  var stageLabel      = document.getElementById('stage-label');
+  var stageTime       = document.getElementById('stage-time');
+  var liveTimer       = document.getElementById('live-timer');
+  var liveLastCheck   = document.getElementById('live-last-check');
+  var liveTotalChecks = document.getElementById('live-total-checks');
+  var liveErrorCount  = document.getElementById('live-error-count');
+  var liveUpdated     = document.getElementById('live-updated');
+  var liveErrBlock    = document.getElementById('live-error-block');
+  var liveErrDetail   = document.getElementById('live-error-detail');
+  var activityLog     = document.getElementById('activity-log');
+  var logUpdated      = document.getElementById('log-updated');
+  var manualCard      = document.getElementById('manual-login-card');
+
+  var nextCheckMs = 0;
+  var lastLogLen  = 0;
+  var timerInt    = null;
+
+  function fmtAgo(ts) {
+    if (!ts) return '—';
+    var s = Math.round((Date.now() - new Date(ts).getTime()) / 1000);
+    if (s < 0)   return 'сейчас';
+    if (s < 60)  return s + ' сек назад';
+    return Math.floor(s / 60) + ' мин назад';
+  }
+
+  function updateTimer() {
+    if (!liveTimer || !nextCheckMs) return;
+    var s = Math.round((nextCheckMs - Date.now()) / 1000);
+    if (s <= 0) { liveTimer.textContent = 'Сейчас'; return; }
+    if (s < 60) { liveTimer.textContent = 'через ' + s + ' сек'; return; }
+    var m = Math.floor(s / 60), r = s % 60;
+    liveTimer.textContent = 'через ' + m + ' мин' + (r > 0 ? ' ' + r + ' с' : '');
+  }
+
+  function pollLive() {
+    fetch('/api/requests/' + rid + '/live?_=' + Date.now())
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(d) {
+        if (!d) return;
+
+        var stage = d.stage || 'waiting';
+
+        // Иконка и подпись стадии
+        if (stageIcon)  stageIcon.textContent  = ICONS[stage] || '⚙️';
+        if (stageLabel) stageLabel.textContent  = d.stage_label || stage;
+        if (stageTime)  stageTime.textContent   = d.stage_updated_at ? fmtAgo(d.stage_updated_at) : '';
+
+        // Фон блока
+        if (stageBlock) {
+          stageBlock.style.background =
+            stage === 'login_manual_required' ? 'rgba(255,153,0,0.12)' :
+            (stage === 'slot_found' || stage === 'booked') ? 'rgba(0,200,100,0.10)' :
+            stage === 'error' ? 'rgba(255,80,80,0.10)' : 'var(--bg2)';
+        }
+
+        // Карточка ручного входа
+        if (manualCard) {
+          manualCard.style.display = stage === 'login_manual_required' ? 'block' : 'none';
+        }
+
+        // Таймер следующей проверки
+        if (d.next_check_at) {
+          nextCheckMs = new Date(d.next_check_at).getTime();
+          if (!timerInt) timerInt = setInterval(updateTimer, 1000);
+          updateTimer();
+        }
+
+        // Последняя проверка
+        if (liveLastCheck) liveLastCheck.textContent = fmtAgo(d.last_check_at);
+
+        // Статистика
+        if (liveTotalChecks) liveTotalChecks.textContent = d.total_checks || 0;
+        if (liveErrorCount) {
+          liveErrorCount.textContent  = d.error_count || 0;
+          liveErrorCount.style.color  = (d.error_count || 0) > 0 ? 'var(--red)' : 'inherit';
+        }
+
+        // Блок ошибки (скрыть при manual_required — там есть карточка)
+        if (liveErrBlock) {
+          if (d.last_error && (d.error_count || 0) > 0 && stage !== 'login_manual_required') {
+            liveErrBlock.style.display = 'block';
+            if (liveErrDetail) liveErrDetail.textContent = d.last_error || '';
+          } else {
+            liveErrBlock.style.display = 'none';
+          }
+        }
+
+        // Лог стадий
+        if (activityLog && d.stage_log) {
+          if (d.stage_log.length !== lastLogLen) {
+            lastLogLen = d.stage_log.length;
+            var html = '';
+            var entries = d.stage_log.slice().reverse();
+            entries.forEach(function(entry) {
+              var t   = new Date(entry.logged_at);
+              var ts  = t.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+              html += '<div style="padding:3px 0;font-size:12px;display:flex;gap:8px;border-bottom:1px solid var(--border)">'
+                + '<span class="meta" style="white-space:nowrap;min-width:60px">' + ts + '</span>'
+                + '<span>' + (entry.message || entry.stage) + '</span>'
+                + '</div>';
+            });
+            activityLog.innerHTML = html || '<div class="meta">Ожидаем данные...</div>';
+            if (logUpdated) logUpdated.textContent = 'обновлено ' + new Date().toLocaleTimeString('ru-RU');
+          }
+        }
+
+        if (liveUpdated) liveUpdated.textContent = 'обновлено ' + new Date().toLocaleTimeString('ru-RU');
+      })
+      .catch(function() {});
+  }
+
+  pollLive();
+  setInterval(pollLive, 4000);
+  document.addEventListener('visibilitychange', function() {
+    if (!document.hidden) pollLive();
+  });
+})();
+</script>

@@ -416,6 +416,30 @@ async function processRequest(vr, job) {
   } catch (err) {
     logger.error(`[worker] Ошибка заявки #${reqId}: ${err.message}`);
 
+    // ── CF Turnstile: не retry, ждём ручного логина ───────────────────
+    if (err.isCfTurnstile || (err.message && err.message.startsWith('CF_TURNSTILE'))) {
+      logger.warn(`[worker] Заявка #${reqId}: CF Turnstile — требуется ручной вход`);
+      await setStage(reqId, jobId, 'login_manual_required',
+        'Cloudflare Turnstile требует ручного входа. Запустите tools/local-login.js');
+      const retryAt = new Date(Date.now() + 2 * 60 * 60 * 1000); // +2 часа
+      await query(`
+        UPDATE monitoring_jobs
+        SET status='idle', state='waiting', last_check_at=NOW(),
+            next_check_at=$1, retry_count=0,
+            last_error='CF Turnstile — требуется ручной вход (tools/local-login.js)',
+            total_checks = COALESCE(total_checks, 0) + 1
+        WHERE id=$2
+      `, [retryAt, jobId]);
+      await writeHistory({
+        requestId: reqId,
+        jobId,
+        result:   'error',
+        errorMsg: 'CF_TURNSTILE: требуется ручной вход через tools/local-login.js',
+      });
+      await clearCurrentJob();
+      return; // НЕ идём в общий retry
+    }
+
     const errElapsed = Math.round((Date.now() - startedAt) / 1000);
     await logStage(reqId, jobId, 'error',
       `Ошибка проверки: ${String(err.message).slice(0, 200)} · ${errElapsed} сек`);
@@ -569,7 +593,7 @@ async function main() {
 
 // ─────────────────────────────────────────────
 // CRASH HANDLER
-// ─────────────────────────────────────────────────────
+// ─────────────────────────────────────────────
 
 process.on('uncaughtException', async (err) => {
   logger.error('[worker] UNCAUGHT EXCEPTION: ' + err.message + '\n' + (err.stack || ''));
@@ -580,8 +604,9 @@ process.on('uncaughtException', async (err) => {
 });
 
 process.on('unhandledRejection', (reason) => {
-  logger.error('[worker] Unhandled Rejection: ' + (reason?.message || String(reason)));
+  logger.error('[worker] Unhandled Rejection: ' + ((reason && reason.message) || String(reason)));
 });
+
 main().catch(async (err) => {
   logger.error('[worker] FATAL: ' + err.message + '\n' + (err.stack || ''));
   await writeCrash(err.message || String(err));
