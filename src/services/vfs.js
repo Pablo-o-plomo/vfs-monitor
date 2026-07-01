@@ -18,6 +18,7 @@
  */
 
 const { newPage, saveSession, randomDelay, sleep } = require('../browser');
+const { query } = require('../db');
 const logger = require('../logger');
 const config = require('../config');
 const fs   = require('fs');
@@ -102,9 +103,6 @@ async function saveErrorArtifacts(page, requestId) {
 async function startLiveScreencast(page, requestId) {
   if (!requestId) return null;
   try {
-    const dir = path.join(process.cwd(), 'artifacts', `request_${requestId}`);
-    fs.mkdirSync(dir, { recursive: true });
-
     const client = await page.context().newCDPSession(page);
     await client.send('Page.startScreencast', {
       format: 'jpeg',
@@ -113,24 +111,27 @@ async function startLiveScreencast(page, requestId) {
       maxHeight: 384,
     });
 
+    // Дебаунс: пишем в БД не чаще раза в 2 секунды
+    // (worker и web — отдельные контейнеры на Railway, файлы не шарятся)
+    let lastWrite = 0;
     client.on('Page.screencastFrame', async ({ data, sessionId }) => {
       try {
-        // Подтверждаем получение кадра (иначе Chrome прекратит отправку)
         await client.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
-        // Записываем JPEG на диск
-        fs.writeFileSync(
-          path.join(dir, 'browser-live.jpg'),
-          Buffer.from(data, 'base64'),
-        );
-        // Обновляем метаданные (URL, время)
-        fs.writeFileSync(
-          path.join(dir, 'browser-live.json'),
-          JSON.stringify({ url: page.url(), ts: Date.now() }),
-        );
+        const now = Date.now();
+        if (now - lastWrite < 2000) return;
+        lastWrite = now;
+        await query(
+          `UPDATE monitoring_jobs
+             SET live_frame     = $1,
+                 live_frame_url = $2,
+                 live_frame_at  = NOW()
+           WHERE request_id = $3`,
+          [data, page.url(), requestId],
+        ).catch(e => logger.warn('[vfs] live_frame write: ' + e.message));
       } catch (_) { /* не критично */ }
     });
 
-    logger.info('[vfs] Live screencast запущен');
+    logger.info('[vfs] Live screencast запущен (DB mode)');
     return client;
   } catch (e) {
     logger.warn('[vfs] Не удалось запустить screencast: ' + e.message);
@@ -331,6 +332,15 @@ async function checkSlots(params, onStage = null) {
   } finally {
     if (_screencastClient) {
       await _screencastClient.send('Page.stopScreencast').catch(() => {});
+    }
+    // Очищаем live_frame в БД — проверка завершена
+    if (requestId) {
+      await query(
+        `UPDATE monitoring_jobs
+           SET live_frame = NULL, live_frame_url = NULL
+         WHERE request_id = $1`,
+        [requestId],
+      ).catch(() => {});
     }
     await page.close();
   }

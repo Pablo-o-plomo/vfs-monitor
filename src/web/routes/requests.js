@@ -392,14 +392,44 @@ router.post('/requests/:id/delete', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// ─── Артефакты диагностики ─────────────────────────────────────────────────
+// ─── Live-кадр браузера (из БД, для мини-браузера) ───────────────────────────
+
+router.get('/requests/:id/live-frame', async (req, res) => {
+  try {
+    const { rows: [job] } = await query(
+      'SELECT live_frame FROM monitoring_jobs WHERE request_id = $1',
+      [req.params.id],
+    );
+    if (!job?.live_frame) return res.status(404).end();
+    const buf = Buffer.from(job.live_frame, 'base64');
+    res.set('Content-Type', 'image/jpeg');
+    res.set('Cache-Control', 'no-store');
+    res.send(buf);
+  } catch (e) { next(e); }
+});
+
+router.get('/requests/:id/live-meta', async (req, res) => {
+  try {
+    const { rows: [job] } = await query(
+      'SELECT live_frame_url AS url, live_frame_at AS ts FROM monitoring_jobs WHERE request_id = $1',
+      [req.params.id],
+    );
+    res.json({
+      url: job?.url || '',
+      ts:  job?.ts  ? new Date(job.ts).getTime() : 0,
+      has_frame: !!job?.url,
+    });
+  } catch (e) { res.json({ url: '', ts: 0, has_frame: false }); }
+});
+
+// ─── Артефакты диагностики ────────────────────────────────────────────────────────────────────────────
 
 router.get('/requests/:id/artifacts/:file', (req, res) => {
   const allowed = ['last-error.png', 'last-error.html', 'browser-live.jpg', 'browser-live.json'];
   const { id, file } = req.params;
   if (!allowed.includes(file)) return res.status(404).end();
   const absPath = path.resolve(process.cwd(), 'artifacts', `request_${id}`, file);
-  if (!fs.existsSync(absPath)) return res.status(404).send('Файл не найден. Скриншот появится после следующей ошибки проверки.');
+  if (!fs.existsSync(absPath)) return res.status(404).send('\u0424\u0430\u0439\u043b \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d. \u0421\u043a\u0440\u0438\u043d\u0448\u043e\u0442 \u043f\u043e\u044f\u0432\u0438\u0442\u0441\u044f \u043f\u043e\u0441\u043b\u0435 \u0441\u043b\u0435\u0434\u0443\u044e\u0449\u0435\u0439 \u043e\u0448\u0438\u0431\u043a\u0438 \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0438.');
   res.sendFile(absPath);
 });
 
