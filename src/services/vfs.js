@@ -158,23 +158,40 @@ async function checkSlots(params, onStage = null) {
     // ── 2. Страница записи ────────────────────────────────────────────
     await randomDelay(1000, 2000);
     await page.goto(`${baseUrl}/book-appointment`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    // Ждём пока Angular отрисует компоненты (network quiets + mat-select в DOM)
     await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+
+    // Если VFS перекинул на /login — сессия устарела, перелогиниваемся
+    if (page.url().includes('/login')) {
+      logger.warn(`[vfs] book-appointment → редирект на login, сессия устарела, перелогиниваемся`);
+      if (onStage) await onStage('login', 'Сессия устарела, авторизуемся заново');
+      await login(page, baseUrl);
+      if (onStage) await onStage('login', 'Авторизация успешна');
+      await randomDelay(1000, 2000);
+      await page.goto(`${baseUrl}/book-appointment`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+    }
+
+    logger.info(`[vfs] Форма записи: ${page.url()}`);
+
+    // Ждём пока Angular отрисует mat-select
     await page.waitForSelector('mat-select, select', { timeout: 15_000 })
       .catch(() => logger.warn('[vfs] mat-select не появился — форма может не загрузиться'));
     await randomDelay(1000, 2000);
 
     // ── 3. Выбор страны и центра ─────────────────────────────────────
+    // Плейсхолдеры VFS: "Выберите приложения своего Центра" / "Выберите запись" / "Выберите подкатегорию"
+    // selectDropdownByText падает на первый mat-select если плейсхолдер не найден — это корректно,
+    // т.к. дропдауны идут в нужном порядке на странице
     logger.info(`[vfs] Выбираем центр: ${center}`);
     if (onStage) await onStage('selecting_country', `Выбрана страна: ${countryName || countryCode.toUpperCase()}`);
-    await selectDropdownByText(page, center, 'Выберите свой Центр приложений');
+    await selectDropdownByText(page, center, 'Выберите приложения своего Центра');
     await randomDelay(800, 1500);
 
     if (onStage) await onStage('selecting_center', `Выбран центр: ${center}`);
 
     // ── 4. Категория ──────────────────────────────────────────────────
     logger.info(`[vfs] Выбираем категорию: ${category}`);
-    await selectDropdownByText(page, category, 'Выберите категорию');
+    await selectDropdownByText(page, category, 'Выберите запись');
     await randomDelay(600, 1200);
 
     // ── 5. Подкатегория ───────────────────────────────────────────────
@@ -323,7 +340,7 @@ async function fillApplicantIfNeeded(page, params = {}) {
   const firstNameInput = page
     .locator('input[formcontrolname="firstName"], input[name="firstName"]')
     .first();
-  if (!(await firstNameInput.isVisible({ timeout: 3000 }).catch(() => false))) return;
+  if (!(await firstNameInput.isVisible({ timeout: 5000 }).catch(() => false))) return;
 
   const firstName = params.firstName || 'TEST';
   const lastName  = params.lastName  || 'TESTOV';
@@ -348,6 +365,23 @@ async function fillApplicantIfNeeded(page, params = {}) {
     await randomDelay(300, 600);
   }
 
+  // Пол — VFS на русском: «Мужской» / «Женский»
+  if (params.gender) {
+    const genderSel = page.locator('mat-select[formcontrolname="gender"], select[name="gender"]').first();
+    if (await genderSel.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await genderSel.click();
+      await randomDelay(300, 600);
+      const genderLabel = params.gender === 'M' ? 'Мужской' : 'Женский';
+      const gOpt = page.locator(
+        `mat-option:has-text("${genderLabel}"), option:has-text("${genderLabel}"),` +
+        `mat-option:has-text("Male"), option:has-text("Male")`
+      ).first();
+      if (await gOpt.isVisible({ timeout: 2000 }).catch(() => false)) await gOpt.click();
+      await randomDelay(300, 600);
+    }
+  }
+
+  // Дата рождения
   const dobInput = page
     .locator('input[formcontrolname="dob"], input[placeholder*="ДД"], input[placeholder*="DD"]')
     .first();
@@ -356,25 +390,83 @@ async function fillApplicantIfNeeded(page, params = {}) {
     await randomDelay(300, 600);
   }
 
-  // Пол
-  if (params.gender) {
-    const genderSel = page.locator('mat-select[formcontrolname="gender"], select[name="gender"]').first();
-    if (await genderSel.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await genderSel.click();
-      await randomDelay(300, 600);
-      const genderLabel = params.gender === 'M' ? 'Male' : 'Female';
-      const gOpt = page.locator(`mat-option:has-text("${genderLabel}"), option:has-text("${genderLabel}")`).first();
-      if (await gOpt.isVisible({ timeout: 2000 }).catch(() => false)) await gOpt.click();
+  // Номер паспорта
+  if (params.passportNum) {
+    const passInput = page
+      .locator('input[formcontrolname="passportNumber"], input[formcontrolname="passportNum"]')
+      .first();
+    if (await passInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await passInput.fill(String(params.passportNum));
       await randomDelay(300, 600);
     }
   }
 
+  // Срок действия паспорта (YYYY-MM-DD → DD/MM/YYYY)
+  if (params.passportExp) {
+    const [ey, em, ed] = String(params.passportExp).slice(0, 10).split('-');
+    const expFormatted = `${ed}/${em}/${ey}`;
+    const expInput = page
+      .locator('input[formcontrolname="passportExpiry"], input[formcontrolname="expiryDate"]')
+      .first();
+    if (await expInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await expInput.fill(expFormatted);
+      await randomDelay(300, 600);
+    }
+  }
+
+  // Контактный номер: два поля — код страны (7) + номер
+  if (params.applicantPhone) {
+    const phoneCodeInput = page
+      .locator('input[formcontrolname="countryCode"], input[formcontrolname="phoneCode"]')
+      .first();
+    if (await phoneCodeInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await phoneCodeInput.fill('7');
+      await randomDelay(200, 400);
+    }
+    const phoneInput = page
+      .locator('input[formcontrolname="contactNumber"], input[formcontrolname="phone"]')
+      .first();
+    if (await phoneInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+      // Убираем +7 / 8 в начале, оставляем 10 цифр
+      await phoneInput.fill(String(params.applicantPhone).replace(/^\+?7|^8/, ''));
+      await randomDelay(300, 600);
+    }
+  }
+
+  // Email
+  if (params.applicantEmail) {
+    const emailInput = page
+      .locator('input[formcontrolname="email"][type="email"], input[type="email"]')
+      .last();
+    if (await emailInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await emailInput.fill(params.applicantEmail);
+      await randomDelay(300, 600);
+    }
+  }
+
+  // VFS требует ждать 30 сек перед сохранением (предупреждение на странице)
+  logger.info('[vfs] Ожидаем 30 сек (требование VFS перед сохранением данных)...');
+  await sleep(30_000);
+
   const saveBtn = page
-    .locator('button:has-text("Сохранить"), button:has-text("Save"), button:has-text("Продолжить")')
+    .locator('button:has-text("Сохранить"), button:has-text("Save")')
     .first();
-  if (await saveBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+  if (await saveBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
     await saveBtn.click();
-    await randomDelay(1500, 2500);
+    await randomDelay(2000, 3000);
+  }
+
+  // После сохранения VFS показывает «Сводка ваших данных» — нужно нажать Продолжить
+  const summaryBody = await page.evaluate(() => document.body.innerText || '');
+  if (summaryBody.includes('Сводка') || summaryBody.includes('Summary')) {
+    logger.info('[vfs] Страница сводки заявителя — нажимаем Продолжить');
+    const contBtn = page
+      .locator('button:has-text("Продолжить"), button:has-text("Continue")')
+      .first();
+    if (await contBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await contBtn.click();
+      await randomDelay(1500, 2500);
+    }
   }
 }
 
@@ -574,11 +666,28 @@ async function attemptBooking(page, params, slotDate, onStage = null) {
     if (onStage) await onStage('filling_applicant', 'Заполняем данные заявителя');
     await fillApplicantIfNeeded(page, params);
 
-    // ── 3. Ждём календарь ───────────────────────────────────────────
-    log('Шаг 3: ждём календарь');
+    // ── 3. Страница «Запись на прием» (/book-appointment) ──────────
+    log('Шаг 3: ждём страницу записи');
+    // Ждём появления радиокнопок или календаря
     await page
-      .waitForSelector('.mat-calendar, .calendar, [class*="calendar"]', { timeout: 25_000 })
-      .catch(() => warn('Календарь не найден за 25 сек'));
+      .waitForSelector('mat-radio-button, .mat-calendar, [class*="calendar"]', { timeout: 25_000 })
+      .catch(() => warn('Страница записи не загрузилась за 25 сек'));
+
+    // VFS показывает «Выберите тип записи»: «Выберите слот» | «Подача в любое время»
+    // «Выберите слот» выбран по умолчанию, но явно кликаем для надёжности
+    const slotRadio = page
+      .locator('mat-radio-button:has-text("Выберите слот"), label:has-text("Выберите слот")')
+      .first();
+    if (await slotRadio.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await slotRadio.click().catch(() => {});
+      log('Выбран тип записи: "Выберите слот"');
+      await randomDelay(500, 1000);
+    }
+
+    // Ждём календарь
+    await page
+      .waitForSelector('.mat-calendar, .calendar, [class*="calendar"]', { timeout: 15_000 })
+      .catch(() => warn('Календарь не найден за 15 сек'));
     await sleep(2000);
 
     // ── 4. Выбираем нужную дату ─────────────────────────────────────
@@ -606,59 +715,108 @@ async function attemptBooking(page, params, slotDate, onStage = null) {
     // ── 5. Выбираем первое доступное время ──────────────────────────
     if (onStage) await onStage('selecting_time', 'Выбираем время');
     log('Шаг 5: выбираем время');
-    await page
-      .waitForSelector('[class*="time"], button:has-text(":")', { timeout: 15_000 })
-      .catch(() => warn('Блок времени не появился'));
-    await sleep(1000);
+    await sleep(2000);
 
     let appointmentTime = '';
-    const timeSelectors = [
-      '[class*="time-slot"]:not([disabled]):not(.disabled)',
-      'button:has-text(":"):not([disabled])',
-      '.available-slot',
-      '[class*="slot"]:not([disabled])',
-    ];
     let timeClicked = false;
-    for (const sel of timeSelectors) {
-      const slots = await page.$$(sel);
-      for (const s of slots) {
-        const text = await s.textContent().then(t => t.trim()).catch(() => '');
+
+    // VFS показывает таблицу: «Время | Доступно → кнопка "Выбрать"»
+    // Кнопка называется «Выбрать», время — в соседней ячейке той же строки
+    const selectTimeBtns = await page.$$('button:has-text("Выбрать"), button:has-text("Select")');
+    if (selectTimeBtns.length > 0) {
+      try {
+        // Читаем время из ячейки строки, где есть кнопка «Выбрать»
+        appointmentTime = await page.evaluate(() => {
+          const rows = document.querySelectorAll('tr');
+          for (const row of rows) {
+            const btn = row.querySelector('button');
+            if (btn && (btn.textContent.includes('Выбрать') || btn.textContent.includes('Select'))) {
+              for (const cell of row.querySelectorAll('td')) {
+                const t = (cell.innerText || '').trim();
+                if (/^\d{1,2}:\d{2}$/.test(t)) return t;
+              }
+            }
+          }
+          return '';
+        });
+      } catch (_) {}
+      await selectTimeBtns[0].click();
+      timeClicked = true;
+      log(`Нажата кнопка "Выбрать", время: ${appointmentTime || '?'}`);
+    }
+
+    // Fallback: кнопки, содержащие время в тексте
+    if (!timeClicked) {
+      const timeButtons = await page.$$('[class*="time"]:not([disabled]), [class*="slot"]:not([disabled])');
+      for (const btn of timeButtons) {
+        const text = await btn.textContent().then(t => t.trim()).catch(() => '');
         if (/\d{1,2}:\d{2}/.test(text)) {
           appointmentTime = text;
-          await s.click();
+          await btn.click();
           timeClicked = true;
-          log(`Время выбрано: ${text}`);
+          log(`Время выбрано (fallback): ${text}`);
           break;
         }
       }
-      if (timeClicked) break;
     }
     if (!timeClicked) warn('Слот времени не найден, продолжаем');
     await randomDelay(1000, 2000);
 
-    // ── 6. Подтверждаем запись ──────────────────────────────────────
+    // ── 5.5 Переходим к странице «Детали и оплата» (/review-pay) ────
+    const goToReviewBtn = page
+      .locator('button:has-text("Продолжить"), button:has-text("Continue")')
+      .first();
+    if (await goToReviewBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await goToReviewBtn.click();
+      log('Переходим к странице подтверждения');
+      await randomDelay(2000, 3000);
+    }
+
+    // ── 6. Страница «Детали и оплата» (/review-pay) — принимаем условия ──
     if (onStage) await onStage('confirming', 'Подтверждаем запись');
-    log('Шаг 6: подтверждаем запись');
-    const confirmSelectors = [
-      'button:has-text("Подтвердить")',
-      'button:has-text("Confirm")',
-      'button:has-text("Book")',
-      'button:has-text("Submit")',
-      'button:has-text("Забронировать")',
-      'button[type="submit"]',
-    ];
-    let confirmed = false;
-    for (const sel of confirmSelectors) {
-      const btn = page.locator(sel).first();
-      if (await btn.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await btn.click();
-        confirmed = true;
-        log(`Нажата кнопка подтверждения: ${sel}`);
-        break;
+    log('Шаг 6: страница подтверждения (/review-pay)');
+
+    // Ждём загрузки кнопки «Подтвердить»
+    await page
+      .waitForSelector('button:has-text("Подтвердить"), button:has-text("Confirm")', { timeout: 15_000 })
+      .catch(() => warn('Страница подтверждения не загрузилась за 15 сек'));
+
+    // Обязательный чекбокс «Я принимаю Условия использования»
+    const tosCheckbox = page
+      .locator('mat-checkbox')
+      .filter({ hasText: 'Условия использования' })
+      .first();
+    if (await tosCheckbox.isVisible({ timeout: 3000 }).catch(() => false)) {
+      const tosClass = await tosCheckbox.getAttribute('class').catch(() => '');
+      if (!tosClass.includes('mat-checkbox-checked')) {
+        await tosCheckbox.click();
+        await randomDelay(500, 1000);
+        log('Условия использования приняты');
       }
     }
+
+    // Нажимаем «Подтвердить»
+    let confirmed = false;
+    const confirmBtn = page
+      .locator('button:has-text("Подтвердить"), button:has-text("Confirm")')
+      .first();
+    if (await confirmBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await confirmBtn.click();
+      confirmed = true;
+      log('Нажата кнопка "Подтвердить"');
+    }
     if (!confirmed) warn('Кнопка подтверждения не найдена');
-        await sleep(4000);
+    await sleep(4000);
+
+    // Проверяем ошибку «слот занят» (VFS показывает English-баннер)
+    const afterConfirmText = await page.evaluate(() => document.body.innerText || '');
+    if (
+      afterConfirmText.includes('all appointments are scheduled in this slot') ||
+      afterConfirmText.includes('select different date and time')
+    ) {
+      warn('Слот был занят в момент подтверждения');
+      return { success: false, date: slotDate, time: appointmentTime, ref: null, error: 'slot_taken' };
+    }
 
     // ── 7. Читаем номер записи с confirmation-страницы ──────────────
     log('Шаг 7: ищем номер записи');
