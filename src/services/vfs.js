@@ -223,28 +223,72 @@ const BOOKING_BTN_SEL = [
 ].join(', ');
 
 /**
- * Проверяет что сессия VFS реально активна:
- * ищет кнопку записи (Start New Booking / Записаться на прием) на текущей странице.
- * Только URL /dashboard НЕ достаточно — VFS может вернуть shell без auth.
+ * Проверяет что сессия VFS реально активна.
+ * Ждёт загрузки Angular (SPA) — сначала domcontentloaded, потом networkidle,
+ * затем ждёт один из маркеров аутентифицированного дашборда.
  * Возвращает: { ok: boolean, btnText: string|null }
  */
 async function verifySession(page) {
   try {
-    const loc = page.locator(BOOKING_BTN_SEL);
-    const btnVisible = await loc.first().isVisible({ timeout: 10_000 }).catch(() => false);
+    // Шаг 1: ждём базовую отрисовку DOM
+    await page.waitForLoadState('domcontentloaded', { timeout: 15_000 }).catch(() => {});
+    // Шаг 2: даём Angular время выполнить bootstrap (SPA не виден до JS)
+    await page.waitForTimeout(5000);
+    // Шаг 3: ждём networkidle (могут быть XHR-запросы от Angular)
+    await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
 
+    logger.info('[vfs] Dashboard Angular loaded. URL: ' + page.url());
+
+    // Если Angular переключил на /login — сессия мертва
+    if (page.url().includes('/login')) {
+      logger.warn('[vfs] После загрузки Angular — редирект на /login');
+      return { ok: false, btnText: null };
+    }
+
+    // Шаг 4: ждём один из признаков аутентифицированного дашборда (таймаут 20 с)
+    const AUTH_MARKERS = [
+      // кнопка записи (EN + RU)
+      BOOKING_BTN_SEL,
+      // навигационные маркеры — присутствуют на любой странице после входа
+      'text="Выйти"',
+      'text="Logout"',
+      'text="Sign Out"',
+      // контентные маркеры
+      'text="Активная запись"',
+      'text="Active Booking"',
+    ].join(', ');
+
+    await page.waitForSelector(AUTH_MARKERS, { timeout: 20_000 })
+      .catch(() => {});
+
+    // Шаг 5: оцениваем результат
+    // 5a. Есть кнопка записи — идеально
+    const loc = page.locator(BOOKING_BTN_SEL);
+    const btnVisible = await loc.first().isVisible({ timeout: 3000 }).catch(() => false);
     if (btnVisible) {
       const btnText = await loc.first().textContent({ timeout: 2000 }).catch(() => '');
       logger.info('[vfs] Dashboard подтвержден. Найдена кнопка: "' + (btnText || '').trim() + '"');
       return { ok: true, btnText: (btnText || '').trim() };
     }
 
-    // Кнопки нет — логируем диагностику
+    // 5b. Кнопки записи нет, но есть Выйти / Активная запись — сессия валидна
+    const hasLogout = await page.locator('text="Выйти", text="Logout", text="Sign Out"')
+      .first().isVisible({ timeout: 3000 }).catch(() => false);
+    const hasActiveBooking = await page.locator('text="Активная запись", text="Active Booking"')
+      .first().isVisible({ timeout: 2000 }).catch(() => false);
+
+    if (hasLogout || hasActiveBooking) {
+      const marker = hasActiveBooking ? 'Активная запись' : 'Выйти';
+      logger.info('[vfs] Dashboard подтвержден по маркеру: "' + marker + '" (кнопки записи нет)');
+      return { ok: true, btnText: null };
+    }
+
+    // 5c. Ничего не нашли — логируем диагностику
     const bodyText = await page.evaluate(
-      () => (document.body.innerText || document.body.textContent || '').slice(0, 300)
+      () => (document.body.innerText || document.body.textContent || '').slice(0, 400)
     ).catch(() => '');
-    logger.warn('[vfs] Кнопка записи НЕ найдена. URL: ' + page.url());
-    logger.warn('[vfs] Body (300 символов): ' + bodyText.replace(/\s+/g, ' ').trim());
+    logger.warn('[vfs] Маркеры аутентификации НЕ найдены. URL: ' + page.url());
+    logger.warn('[vfs] Body (400 символов): ' + bodyText.replace(/\s+/g, ' ').trim());
     return { ok: false, btnText: null };
   } catch (e) {
     logger.warn('[vfs] verifySession error: ' + e.message);
