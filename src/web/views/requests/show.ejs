@@ -212,30 +212,32 @@
 </div>
 
 
-<!-- CF Turnstile: требуется ручной вход -->
+<!-- Сессия VFS истекла: требуется импорт cookies -->
 <div id="manual-login-card" style="display:none;margin-bottom:20px;border:2px solid #f90;border-radius:10px;overflow:hidden">
   <div style="background:rgba(255,153,0,0.15);border-bottom:1px solid #f90;padding:12px 18px;display:flex;align-items:center;gap:10px">
     <span style="font-size:24px">⚠️</span>
-    <span style="font-size:16px;font-weight:700;color:#f90">Требуется ручной вход в VFS Global</span>
+    <span style="font-size:16px;font-weight:700;color:#f90">Сессия VFS истекла — нужно обновить cookies</span>
   </div>
   <div style="padding:16px 20px">
     <p style="margin:0 0 12px;font-size:14px;line-height:1.6">
-      Cloudflare Turnstile заблокировал автоматический вход.
-      Войдите вручную через локальный браузер — сессия сохранится в БД, и Railway worker продолжит работу.
+      Worker загрузил cookies из базы, но VFS их не принял (сессия истекла или неполна).
+      Войдите в VFS вручную в обычном браузере, экспортируйте cookies и загрузите их в систему.
     </p>
     <div style="background:var(--bg2);border-radius:8px;padding:14px 16px;font-size:13px;margin-bottom:14px">
-      <b>Инструкция:</b>
-      <ol style="margin:8px 0 0;padding-left:18px;line-height:2.2">
-        <li>Откройте терминал в папке проекта <code>vfs-monitor</code></li>
-        <li>Выполните: <code style="background:var(--bg);padding:2px 7px;border-radius:4px;font-size:12px">node tools/local-login.js</code></li>
-        <li>В открывшемся браузере войдите в VFS вручную (решите Cloudflare)</li>
-        <li>Вернитесь в терминал — нажмите Enter (или подождите авто-сохранения)</li>
-        <li>Нажмите кнопку ниже</li>
+      <b>Инструкция (5 шагов):</b>
+      <ol style="margin:10px 0 0;padding-left:18px;line-height:2.4">
+        <li>Установите расширение <b>Cookie-Editor</b> в Chrome/Firefox</li>
+        <li>Откройте <a href="https://visa.vfsglobal.com/rus/ru/hun/login" target="_blank" style="color:var(--accent)">visa.vfsglobal.com</a> и войдите в аккаунт VFS до страницы <b>/dashboard</b></li>
+        <li>Нажмите иконку Cookie-Editor → <b>Export → Export as JSON</b> → сохраните файл как <code>cookies-hun.json</code></li>
+        <li>Положите файл в корень папки <code>vfs-monitor</code> и выполните в терминале:<br>
+          <code style="display:inline-block;margin-top:6px;background:var(--bg);padding:4px 10px;border-radius:4px;font-size:12px">node tools/import-cookies.js hun cookies-hun.json --verify</code>
+        </li>
+        <li>Убедитесь что скрипт вывел <b>✅ Верификация УСПЕШНА</b>, затем нажмите кнопку ниже</li>
       </ol>
     </div>
     <form action="/requests/<%= vr.id %>/check-now" method="POST">
       <button type="submit" class="btn btn-primary">
-        ✅ Сессия обновлена — Запустить проверку
+        ✅ Cookies обновлены — Запустить проверку
       </button>
     </form>
   </div>
@@ -768,20 +770,4 @@ function setParamsCenter(city) {
                 + '<span>' + (entry.message || entry.stage) + '</span>'
                 + '</div>';
             });
-            activityLog.innerHTML = html || '<div class="meta">Ожидаем данные...</div>';
-            if (logUpdated) logUpdated.textContent = 'обновлено ' + new Date().toLocaleTimeString('ru-RU');
-          }
-        }
-
-        if (liveUpdated) liveUpdated.textContent = 'обновлено ' + new Date().toLocaleTimeString('ru-RU');
-      })
-      .catch(function() {});
-  }
-
-  pollLive();
-  setInterval(pollLive, 4000);
-  document.addEventListener('visibilitychange', function() {
-    if (!document.hidden) pollLive();
-  });
-})();
-</script>
+            activityLog.innerHTML = html || '<div clas
