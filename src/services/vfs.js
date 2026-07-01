@@ -284,9 +284,19 @@ async function checkSlots(params, onStage = null) {
     if (onStage) await onStage('checking_slots', 'Переходим к записи');
 
     // ── 2. Страница записи ────────────────────────────────────────────
-    await randomDelay(1000, 2000);
-    await page.goto(`${baseUrl}/book-appointment`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+    // Задержка на dashboard — даём Angular инициализировать токены/localStorage
+    await randomDelay(2000, 3500);
+    await page.goto(`${baseUrl}/book-appointment`, { waitUntil: 'networkidle', timeout: 60_000 });
+
+    // Проверяем: VFS иногда возвращает JSON {"code":"403201"} вместо Angular SPA
+    // при прямом переходе — пробуем reload
+    const bodyAfterGoto = await page.evaluate(() => document.body?.innerText || '').catch(() => '');
+    if (bodyAfterGoto.includes('"code"') && bodyAfterGoto.includes('403')) {
+      logger.warn(`[vfs] book-appointment вернул JSON-ошибку: ${bodyAfterGoto.slice(0, 120)}`);
+      logger.info('[vfs] Пробуем reload...');
+      await sleep(2000);
+      await page.reload({ waitUntil: 'networkidle', timeout: 60_000 }).catch(() => {});
+    }
 
     // Если VFS перекинул на /login — сессия устарела, перелогиниваемся
     if (page.url().includes('/login')) {
@@ -295,8 +305,8 @@ async function checkSlots(params, onStage = null) {
       await login(page, baseUrl);
       if (onStage) await onStage('login', 'Авторизация успешна');
       await randomDelay(1000, 2000);
-      await page.goto(`${baseUrl}/book-appointment`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-      await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+      await page.goto(`${baseUrl}/book-appointment`, { waitUntil: 'networkidle', timeout: 60_000 });
+      await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
     }
 
     logger.info(`[vfs] Форма записи: ${page.url()}`);
