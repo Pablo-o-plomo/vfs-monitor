@@ -17,7 +17,25 @@
  *   node tools/local-login.js hun
  */
 
-require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
+// dotenv — опционален: загружаем .env если dotenv установлен,
+// иначе скрипт использует переменные окружения напрямую.
+try {
+  require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
+} catch (_) {
+  // dotenv не установлен — продолжаем без него
+}
+
+const path = require('path');
+
+// Проверяем наличие обязательных npm-пакетов до запуска браузера
+const REQUIRED = ['playwright-extra', 'puppeteer-extra-plugin-stealth', 'pg'];
+const missing = REQUIRED.filter(m => { try { require.resolve(m); return false; } catch (_) { return true; } });
+if (missing.length > 0) {
+  console.error('\n❌ Не установлены пакеты: ' + missing.join(', '));
+  console.error('   Запустите: npm install');
+  console.error('   Затем:     npx playwright install chromium\n');
+  process.exit(1);
+}
 
 const { chromium } = require('playwright-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
@@ -36,8 +54,11 @@ const LOGIN_URL   = `https://visa.vfsglobal.com/rus/ru/${countryCode}/login`;
 async function main() {
   if (!process.env.DATABASE_URL) {
     console.error('\n❌ DATABASE_URL не задан.');
-    console.error('   Добавьте в .env файл или передайте как переменную:');
-    console.error('   DATABASE_URL=postgres://... node tools/local-login.js\n');
+    console.error('   Варианты:');
+    console.error('   1. Создайте файл vfs-monitor/.env с DATABASE_URL=postgres://...');
+    console.error('      и выполните: npm install  (чтобы установить dotenv)');
+    console.error('   2. Передайте переменную напрямую:');
+    console.error('      DATABASE_URL=postgres://... node tools/local-login.js hun\n');
     process.exit(1);
   }
 
