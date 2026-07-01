@@ -69,7 +69,7 @@ async function login(page, baseUrl) {
 // ГЛАВНАЯ ФУНКЦИЯ — принимает params из БД
 // ─────────────────────────────────────────────
 
-async function checkSlots(params) {
+async function checkSlots(params, onStage = null) {
   const {
     countryCode = 'hun',
     center,
@@ -118,6 +118,8 @@ async function checkSlots(params) {
       logger.info('[vfs] Сессия активна, пропускаем логин');
     }
 
+    if (onStage) await onStage('checking_slots');
+
     // ── 2. Страница записи ────────────────────────────────────────────
     await randomDelay(1000, 2000);
     await page.goto(`${baseUrl}/book-appointment`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
@@ -145,10 +147,11 @@ async function checkSlots(params) {
     const bannerSlots = await parseEarliestSlotBanner(page, dateFrom, dateTo);
     if (bannerSlots.length > 0) {
       logger.info('[vfs] Слот найден через баннер');
+      if (onStage) await onStage('slot_found');
 
       if (params.autoBook) {
         logger.info('[vfs] auto_book=true → запускаем автобронирование');
-        const booking = await attemptBooking(page, params, bannerSlots[0].date);
+        const booking = await attemptBooking(page, params, bannerSlots[0].date, onStage);
         return { slots: bannerSlots, booking };
       }
 
@@ -472,7 +475,7 @@ async function parseEarliestSlotBanner(page, dateFrom, dateTo) {
 //   6. Подтвердить запись
 //   7. Извлечь номер записи с confirmation-страницы
 
-async function attemptBooking(page, params, slotDate) {
+async function attemptBooking(page, params, slotDate, onStage = null) {
   const log = (msg) => logger.info(`[booking] ${msg}`);
   const warn = (msg) => logger.warn(`[booking] ${msg}`);
 
@@ -490,6 +493,7 @@ async function attemptBooking(page, params, slotDate) {
 
     // ── 2. Заполнить форму заявителя ────────────────────────────────
     log('Шаг 2: заполняем форму заявителя');
+    if (onStage) await onStage('filling_applicant');
     await fillApplicantIfNeeded(page, params);
 
     // ── 3. Ждём календарь ───────────────────────────────────────────
@@ -522,6 +526,7 @@ async function attemptBooking(page, params, slotDate) {
     await randomDelay(1000, 2000);
 
     // ── 5. Выбираем первое доступное время ──────────────────────────
+    if (onStage) await onStage('selecting_time');
     log('Шаг 5: выбираем время');
     await page
       .waitForSelector('[class*="time"], button:has-text(":")', { timeout: 15_000 })
@@ -554,6 +559,7 @@ async function attemptBooking(page, params, slotDate) {
     await randomDelay(1000, 2000);
 
     // ── 6. Подтверждаем запись ──────────────────────────────────────
+    if (onStage) await onStage('booking');
     log('Шаг 6: подтверждаем запись');
     const confirmSelectors = [
       'button:has-text("Подтвердить")',
@@ -605,13 +611,7 @@ async function attemptBooking(page, params, slotDate) {
 
   } catch (err) {
     warn(`Ошибка автобронирования: ${err.message}`);
-    return {
-      success: false,
-      date:  slotDate,
-      time:  null,
-      ref:   null,
-      error: err.message,
-    };
+    return { success: false, date: slotDate, time: null, ref: null, error: err.message };
   }
 }
 

@@ -59,6 +59,8 @@ router.get('/live', async (req, res, next) => {
           c.name         AS client_name,
           mj.status      AS job_status,
           mj.state       AS job_state,
+          mj.job_stage,
+          mj.stage_updated_at,
           mj.next_check_at,
           mj.last_check_at,
           mj.error_count,
@@ -309,6 +311,60 @@ router.get('/jobs', async (req, res, next) => {
       ORDER BY vr.priority DESC, vr.created_at DESC
     `);
     res.json({ count: rows.length, jobs: rows });
+  } catch (e) { next(e); }
+});
+
+// ─────────────────────────────────────────────
+// GET /api/requests/:id/live  — live данные одной заявки
+// ─────────────────────────────────────────────
+
+const STAGE_LABELS = {
+  waiting:           'Ожидает проверки',
+  opening_vfs:       'Открывает VFS',
+  checking_slots:    'Проверяет наличие слотов',
+  slot_found:        'Найден слот',
+  filling_applicant: 'Заполняет данные заявителя',
+  selecting_time:    'Выбирает время',
+  booking:           'Оформляет запись...',
+  booked:            'Запись оформлена',
+  booking_failed:    'Ошибка бронирования',
+  retry:             'Повтор через несколько минут',
+  error:             'Ошибка',
+  running:           'Идёт проверка...',
+};
+
+router.get('/requests/:id/live', async (req, res, next) => {
+  try {
+    const { rows: [data] } = await query(`
+      SELECT
+        vr.status        AS request_status,
+        vr.appointment_date,
+        vr.appointment_time,
+        vr.booking_ref,
+        vr.booked_at,
+        mj.status        AS job_status,
+        mj.state         AS job_state,
+        mj.job_stage,
+        mj.stage_updated_at,
+        mj.next_check_at,
+        mj.last_check_at,
+        mj.error_count,
+        mj.last_error,
+        mj.total_checks,
+        EXTRACT(EPOCH FROM (mj.next_check_at - NOW()))::int AS seconds_until
+      FROM visa_requests vr
+      LEFT JOIN monitoring_jobs mj ON mj.request_id = vr.id
+      WHERE vr.id = $1
+    `, [req.params.id]);
+
+    if (!data) return res.status(404).json({ error: 'not found' });
+
+    const stage = data.job_stage || data.job_state || 'waiting';
+    res.json({
+      ...data,
+      stage,
+      stage_label: STAGE_LABELS[stage] || stage,
+    });
   } catch (e) { next(e); }
 });
 

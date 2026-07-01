@@ -285,6 +285,25 @@ router.post('/requests/:id/applicant', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+router.post('/requests/:id/check-now', async (req, res, next) => {
+  try {
+    await query(`
+      UPDATE monitoring_jobs
+        SET next_check_at    = NOW(),
+            status           = 'idle',
+            state            = 'waiting',
+            job_stage        = 'waiting',
+            stage_updated_at = NOW(),
+            error_count      = 0,
+            retry_count      = 0,
+            retry_at         = NULL,
+            last_error       = NULL
+       WHERE request_id = $1
+    `, [req.params.id]);
+    res.redirect(`/requests/${req.params.id}`);
+  } catch (e) { next(e); }
+});
+
 router.post('/requests/:id/delete', async (req, res, next) => {
   try {
     const { rows: [vr] } = await query('SELECT client_id FROM visa_requests WHERE id=$1', [req.params.id]);

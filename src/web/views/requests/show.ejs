@@ -14,11 +14,18 @@
     </div>
   </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <span class="badge badge-<%= vr.status %>" style="font-size:13px;padding:4px 12px"><%= vr.status %></span>
+    <% if (vr.status === 'done' || vr.status === 'booked') { %>
+      <span class="badge" style="background:var(--green);color:#fff;font-size:13px;padding:4px 14px">✅ ЗАПИСАН</span>
+    <% } else { %>
+      <span class="badge badge-<%= vr.status %>" style="font-size:13px;padding:4px 12px"><%= vr.status %></span>
+    <% } %>
 
     <% if (vr.status === 'active') { %>
       <form action="/requests/<%= vr.id %>/pause" method="POST">
         <button class="btn btn-warning btn-sm">⏸ Пауза</button>
+      </form>
+      <form action="/requests/<%= vr.id %>/check-now" method="POST">
+        <button class="btn btn-success btn-sm">🔄 Проверить сейчас</button>
       </form>
     <% } else if (vr.status === 'paused' || vr.status === 'error') { %>
       <form action="/requests/<%= vr.id %>/resume" method="POST">
@@ -39,55 +46,92 @@
   </div>
 </div>
 
-<!-- Worker статус -->
-<div class="info-grid" style="margin-bottom:24px">
-  <div class="info-item">
-    <label>Worker</label>
-    <span>
-      <% if (vr.job_status) { %>
-        <span class="badge badge-<%= vr.job_status %>"><%= vr.job_status %></span>
-      <% } else { %>—<% } %>
-    </span>
-  </div>
-  <div class="info-item">
-    <label>Последняя проверка</label>
-    <span><%= fmt.dt(vr.last_check_at) %></span>
-  </div>
-  <div class="info-item">
-    <label>Следующая проверка</label>
-    <span><%= fmt.dt(vr.next_check_at) %></span>
-  </div>
-  <div class="info-item">
-    <label>Всего проверок</label>
-    <span><%= vr.total_checks || 0 %></span>
-  </div>
-  <div class="info-item">
-    <label>Ошибок подряд</label>
-    <span style="color:<%= (vr.error_count || 0) > 0 ? 'var(--red)' : 'inherit' %>">
-      <%= vr.error_count || 0 %>
-    </span>
-  </div>
-  <% if (vr.last_error && vr.job_status !== 'running') { %>
-  <div class="info-item" style="grid-column:1/-1">
-    <label>Последняя ошибка
-      <form action="/requests/<%= vr.id %>/clear-error" method="POST" style="display:inline;margin-left:8px">
-        <button type="submit" class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px">✕ Сбросить</button>
-      </form>
-    </label>
-    <div>
-      <span style="color:var(--red);font-size:13px">Последняя проверка завершилась ошибкой</span>
-      <button type="button" class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px;margin-left:8px"
-        onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none';this.textContent=this.textContent==='Подробнее'?'Скрыть':'Подробнее'">Подробнее</button>
-      <div style="display:none;margin-top:8px;padding:8px;background:var(--bg2);border-radius:6px;font-size:11px;font-family:monospace;color:var(--red);word-break:break-all"><%= vr.last_error %></div>
+<!-- Блок успешного бронирования -->
+<% if ((vr.status === 'done' || vr.status === 'booked') && vr.booked_at) { %>
+<div class="card" style="margin-bottom:20px;border:2px solid var(--green)">
+  <div class="card-header" style="color:var(--green)">✅ Запись оформлена</div>
+  <div style="padding:16px 20px">
+    <div class="info-grid">
+      <div class="info-item">
+        <label>Дата записи</label>
+        <span style="font-size:18px;font-weight:700"><%= fmt.date(vr.appointment_date) %></span>
+      </div>
+      <% if (vr.appointment_time) { %>
+      <div class="info-item">
+        <label>Время</label>
+        <span style="font-size:18px;font-weight:700"><%= vr.appointment_time %></span>
+      </div>
+      <% } %>
+      <% if (vr.booking_ref) { %>
+      <div class="info-item">
+        <label>Номер брони</label>
+        <span style="font-weight:600;font-family:monospace"><%= vr.booking_ref %></span>
+      </div>
+      <% } %>
+      <div class="info-item">
+        <label>Оформлено</label>
+        <span class="meta"><%= fmt.dt(vr.booked_at) %> · автоматически</span>
+      </div>
     </div>
   </div>
-  <% } %>
-  <% if (vr.notes) { %>
-  <div class="info-item" style="grid-column:1/-1">
-    <label>Примечания</label>
-    <span><%= vr.notes %></span>
+</div>
+<% } %>
+
+<!-- Live статус worker -->
+<div class="card" style="margin-bottom:20px">
+  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
+    <span>⚡ Статус мониторинга</span>
+    <span id="live-updated" class="meta" style="font-size:11px"></span>
   </div>
-  <% } %>
+  <div style="padding:14px 20px">
+    <!-- Стадия -->
+    <div id="stage-block" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;padding:10px 14px;background:var(--bg2);border-radius:8px">
+      <span id="stage-icon" style="font-size:20px"></span>
+      <div>
+        <div id="stage-label" style="font-size:14px;font-weight:600"></div>
+        <div id="stage-time" class="meta" style="font-size:11px"></div>
+      </div>
+    </div>
+
+    <!-- Таймер и статистика -->
+    <div class="info-grid" style="font-size:13px">
+      <div class="info-item">
+        <label>Следующая проверка</label>
+        <span id="live-timer" style="font-weight:600"></span>
+      </div>
+      <div class="info-item">
+        <label>Последняя проверка</label>
+        <span id="live-last-check"></span>
+      </div>
+      <div class="info-item">
+        <label>Всего проверок</label>
+        <span id="live-total-checks"><%= vr.total_checks || 0 %></span>
+      </div>
+      <div class="info-item">
+        <label>Ошибок подряд</label>
+        <span id="live-error-count" style="color:<%= (vr.error_count || 0) > 0 ? 'var(--red)' : 'inherit' %>"><%= vr.error_count || 0 %></span>
+      </div>
+    </div>
+
+    <!-- Блок ошибки -->
+    <div id="live-error-block" style="display:none;margin-top:12px;padding:10px 12px;background:var(--bg2);border-radius:6px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="color:var(--red);font-size:13px">Последняя проверка завершилась ошибкой</span>
+        <form action="/requests/<%= vr.id %>/clear-error" method="POST" style="display:inline">
+          <button type="submit" class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px">✕ Сбросить</button>
+        </form>
+        <button type="button" class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px"
+          onclick="var d=document.getElementById('live-error-detail');d.style.display=d.style.display==='none'?'block':'none';this.textContent=this.textContent==='Подробнее'?'Скрыть':'Подробнее'">Подробнее</button>
+      </div>
+      <div id="live-error-detail" style="display:none;margin-top:6px;font-size:11px;font-family:monospace;color:var(--red);word-break:break-all"></div>
+    </div>
+
+    <% if (vr.notes) { %>
+    <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:13px">
+      <span class="meta">Примечания: </span><%= vr.notes %>
+    </div>
+    <% } %>
+  </div>
 </div>
 
 <!-- Данные заявителя -->
@@ -216,7 +260,7 @@
         <div class="form-group" style="grid-column:1/-1">
           <label>Комментарий</label>
           <input type="text" name="comment" value="<%= vr.comment || '' %>">
-           </div>
+        </div>
         <div class="form-group" style="grid-column:1/-1">
           <label for="auto_book_cb">Автобронирование</label>
           <div>
@@ -402,3 +446,133 @@
 <style>
 .hidden { display: none !important; }
 </style>
+
+<script>
+(function () {
+  var REQUEST_ID = '<%= vr.id %>';
+
+  var STAGE_ICONS = {
+    waiting:           '🟢',
+    opening_vfs:       '🌐',
+    checking_slots:    '🔍',
+    slot_found:        '📅',
+    filling_applicant: '👤',
+    selecting_time:    '🕒',
+    booking:           '📝',
+    booked:            '✅',
+    booking_failed:    '❌',
+    retry:             '🔄',
+    error:             '🚨',
+    running:           '⚙',
+  };
+
+  var STAGE_LABELS = {
+    waiting:           'Ожидает проверки',
+    opening_vfs:       'Открывает VFS',
+    checking_slots:    'Проверяет наличие слотов',
+    slot_found:        'Найден слот',
+    filling_applicant: 'Заполняет данные заявителя',
+    selecting_time:    'Выбирает время',
+    booking:           'Оформляет запись...',
+    booked:            'Запись оформлена',
+    booking_failed:    'Ошибка бронирования',
+    retry:             'Повтор через несколько минут',
+    error:             'Ошибка',
+    running:           'Идёт проверка...',
+  };
+
+  var secondsUntil = null;
+  var timerInterval = null;
+
+  function fmtCountdown(sec) {
+    if (sec == null) return '—';
+    if (sec <= 0) return '<span style="color:var(--green);font-weight:600">⏳ сейчас...</span>';
+    if (sec < 60) return 'через ' + sec + ' сек';
+    var m = Math.floor(sec / 60), s = sec % 60;
+    return 'через ' + m + ' мин ' + (s > 0 ? s + ' сек' : '');
+  }
+
+  function fmtDatetime(iso) {
+    return iso ? new Date(iso).toLocaleString('ru-RU') : '—';
+  }
+
+  function setEl(id, html) {
+    var el = document.getElementById(id);
+    if (el) el.innerHTML = html;
+  }
+  function setTxt(id, txt) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = txt;
+  }
+
+  function startTimer() {
+    if (timerInterval) clearInterval(timerInterval);
+    timerInterval = setInterval(function () {
+      if (secondsUntil != null && secondsUntil > 0) secondsUntil--;
+      setEl('live-timer', fmtCountdown(secondsUntil));
+    }, 1000);
+  }
+
+  async function refresh() {
+    try {
+      var r = await fetch('/api/requests/' + REQUEST_ID + '/live');
+      if (!r.ok) return;
+      var d = await r.json();
+
+      // обновляем таймер
+      secondsUntil = d.seconds_until;
+      setEl('live-timer', fmtCountdown(secondsUntil));
+      setTxt('live-last-check', fmtDatetime(d.last_check_at));
+      setTxt('live-total-checks', d.total_checks || '0');
+
+      var errEl = document.getElementById('live-error-count');
+      if (errEl) {
+        errEl.textContent = d.error_count || '0';
+        errEl.style.color = parseInt(d.error_count) > 0 ? 'var(--red)' : 'inherit';
+      }
+
+      // стадия
+      var stage = d.stage || 'waiting';
+      var icon  = STAGE_ICONS[stage] || '⚙';
+      var label = STAGE_LABELS[stage] || stage;
+
+      setTxt('stage-icon', icon);
+      setTxt('stage-label', label);
+      if (d.stage_updated_at) {
+        setTxt('stage-time', 'с ' + new Date(d.stage_updated_at).toLocaleTimeString('ru-RU'));
+      }
+
+      // цвет блока стадии
+      var stageBlock = document.getElementById('stage-block');
+      if (stageBlock) {
+        if (stage === 'booked')          stageBlock.style.background = 'rgba(34,197,94,0.12)';
+        else if (stage === 'booking_failed' || stage === 'error') stageBlock.style.background = 'rgba(239,68,68,0.10)';
+        else if (stage === 'slot_found' || stage === 'filling_applicant' || stage === 'selecting_time' || stage === 'booking') stageBlock.style.background = 'rgba(59,130,246,0.10)';
+        else if (stage === 'checking_slots' || stage === 'opening_vfs' || stage === 'running') stageBlock.style.background = 'rgba(245,158,11,0.10)';
+        else stageBlock.style.background = 'var(--bg2)';
+      }
+
+      // блок ошибки
+      var errBlock = document.getElementById('live-error-block');
+      if (errBlock) {
+        if (d.last_error && d.job_status !== 'running') {
+          errBlock.style.display = 'block';
+          var errDetail = document.getElementById('live-error-detail');
+          if (errDetail) errDetail.textContent = d.last_error;
+        } else {
+          errBlock.style.display = 'none';
+        }
+      }
+
+      setTxt('live-updated', 'обновлено ' + new Date().toLocaleTimeString('ru-RU'));
+
+    } catch (e) {
+      setTxt('live-updated', '⚠ ошибка');
+    }
+  }
+
+  startTimer();
+  refresh();
+  setInterval(refresh, 5000);
+})();
+</script>
