@@ -392,9 +392,9 @@ router.post('/requests/:id/delete', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// ─── Live-кадр браузера (из БД, для мини-браузера) ───────────────────────────
+// ─── Live-кадр браузера: /live-frame.jpg  /live-frame.json ─────────────────────
 
-router.get('/requests/:id/live-frame', async (req, res) => {
+router.get('/requests/:id/live-frame.jpg', async (req, res) => {
   try {
     const { rows: [job] } = await query(
       'SELECT live_frame FROM monitoring_jobs WHERE request_id = $1',
@@ -408,7 +408,7 @@ router.get('/requests/:id/live-frame', async (req, res) => {
   } catch (e) { next(e); }
 });
 
-router.get('/requests/:id/live-meta', async (req, res) => {
+router.get('/requests/:id/live-frame.json', async (req, res) => {
   try {
     const { rows: [job] } = await query(
       'SELECT live_frame_url AS url, live_frame_at AS ts FROM monitoring_jobs WHERE request_id = $1',

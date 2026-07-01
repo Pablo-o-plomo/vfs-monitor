@@ -246,12 +246,12 @@
 
   function refreshFrame() {
     if (stopped || document.hidden) return;
-    frameEl.src = '/requests/' + rid + '/live-frame?t=' + Date.now();
+    frameEl.src = '/requests/' + rid + '/live-frame.jpg?t=' + Date.now();
   }
 
   function refreshMeta() {
     if (stopped) return;
-    fetch('/requests/' + rid + '/live-meta?t=' + Date.now())
+    fetch('/requests/' + rid + '/live-frame.json?t=' + Date.now())
       .then(function(r) { return r.ok ? r.json() : null; })
       .then(function(d) {
         if (!d) return;

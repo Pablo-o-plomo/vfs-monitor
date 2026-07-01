@@ -101,46 +101,46 @@ async function saveErrorArtifacts(page, requestId) {
 }
 
 // ─────────────────────────────────────────────
-// МИНИ-БРАУЗЕР — CDP screencast для admin panel
+// МИНИ-БРАУЗЕР — polling screenshot для admin panel
 // ─────────────────────────────────────────────
 
-async function startLiveScreencast(page, requestId) {
+async function startLiveScreenshot(page, requestId) {
   if (!requestId) return null;
-  try {
-    const client = await page.context().newCDPSession(page);
-    await client.send('Page.startScreencast', {
-      format: 'jpeg',
-      quality: 65,
-      maxWidth: 683,
-      maxHeight: 384,
-    });
 
-    // Дебаунс: пишем в БД не чаще раза в 2 секунды
-    // (worker и web — отдельные контейнеры на Railway, файлы не шарятся)
-    let lastWrite = 0;
-    client.on('Page.screencastFrame', async ({ data, sessionId }) => {
-      try {
-        await client.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
-        const now = Date.now();
-        if (now - lastWrite < 2000) return;
-        lastWrite = now;
-        await query(
-          `UPDATE monitoring_jobs
-             SET live_frame     = $1,
-                 live_frame_url = $2,
-                 live_frame_at  = NOW()
-           WHERE request_id = $3`,
-          [data, page.url(), requestId],
-        ).catch(e => logger.warn('[vfs] live_frame write: ' + e.message));
-      } catch (_) { /* не критично */ }
-    });
+  let firstFrame = true;
+  let frameCount = 0;
 
-    logger.info('[vfs] Live screencast запущен (DB mode)');
-    return client;
-  } catch (e) {
-    logger.warn('[vfs] Не удалось запустить screencast: ' + e.message);
-    return null;
-  }
+  logger.info(`[live] Запуск live-screenshot polling (700ms, requestId=${requestId})`);
+
+  const interval = setInterval(async () => {
+    try {
+      const buf = await page.screenshot({ type: 'jpeg', quality: 60, fullPage: false });
+      const b64 = buf.toString('base64');
+
+      await query(
+        `UPDATE monitoring_jobs
+           SET live_frame     = $1,
+               live_frame_url = $2,
+               live_frame_at  = NOW()
+         WHERE request_id = $3`,
+        [b64, page.url(), requestId],
+      );
+
+      frameCount++;
+      if (firstFrame) {
+        logger.info(`[live] Первый кадр записан в БД (requestId=${requestId})`);
+        firstFrame = false;
+      }
+    } catch (e) {
+      logger.warn(`[live] Ошибка записи кадра: ${e.message}`);
+    }
+  }, 700);
+
+  // Возвращаем stop-функцию (последний кадр остаётся в БД)
+  return function stopLiveScreenshot() {
+    clearInterval(interval);
+    logger.info(`[live] Live-screenshot остановлен (кадров записано: ${frameCount})`);
+  };
 }
 
 // ─────────────────────────────────────────────
@@ -166,8 +166,8 @@ async function checkSlots(params, onStage = null) {
   const capturedSlots = [];
   let apiCaptured = false;
 
-  // Запускаем live screencast для admin panel (мини-браузер)
-  const _screencastClient = await startLiveScreencast(page, requestId);
+  // Запускаем live-screenshot polling для admin panel (мини-браузер)
+  const stopLiveScreenshot = await startLiveScreenshot(page, requestId);
 
   // Перехватываем JSON-ответы с доступностью слотов
   page.on('response', async (response) => {
@@ -334,18 +334,8 @@ async function checkSlots(params, onStage = null) {
     }
     throw err;
   } finally {
-    if (_screencastClient) {
-      await _screencastClient.send('Page.stopScreencast').catch(() => {});
-    }
-    // Очищаем live_frame в БД — проверка завершена
-    if (requestId) {
-      await query(
-        `UPDATE monitoring_jobs
-           SET live_frame = NULL, live_frame_url = NULL
-         WHERE request_id = $1`,
-        [requestId],
-      ).catch(() => {});
-    }
+    // Останавливаем polling (последний кадр остаётся в БД — видно что было на экране)
+    if (stopLiveScreenshot) stopLiveScreenshot();
     await page.close();
   }
 }
