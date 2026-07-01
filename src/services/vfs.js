@@ -149,8 +149,14 @@ async function login(page, baseUrl) {
   // (оба признака = успешный вход)
   const START_BTN_LOGIN_SEL = [
     'button:has-text("Start New Booking")',
+    'button:has-text("New Booking")',
     'button:has-text("Начать новое бронирование")',
     'button:has-text("Новое бронирование")',
+    'button:has-text("Записаться на прием")',
+    'button:has-text("Записаться на приём")',
+    '[role="button"]:has-text("Записаться на прием")',
+    '[role="button"]:has-text("Записаться на приём")',
+    '[role="button"]:has-text("Start New Booking")',
   ].join(', ');
 
   await Promise.race([
@@ -202,38 +208,47 @@ async function logCookieInfo(page) {
   }
 }
 
+/** Универсальный селектор кнопки записи VFS (EN + RU + role=button) */
+const BOOKING_BTN_SEL = [
+  'button:has-text("Start New Booking")',
+  'button:has-text("New Booking")',
+  'button:has-text("Начать новое бронирование")',
+  'button:has-text("Новое бронирование")',
+  'button:has-text("Записаться на прием")',
+  'button:has-text("Записаться на приём")',
+  '[role="button"]:has-text("Записаться на прием")',
+  '[role="button"]:has-text("Записаться на приём")',
+  '[role="button"]:has-text("Start New Booking")',
+  '[role="button"]:has-text("New Booking")',
+].join(', ');
+
 /**
  * Проверяет что сессия VFS реально активна:
- * ищет кнопку "Start New Booking" на текущей странице.
+ * ищет кнопку записи (Start New Booking / Записаться на прием) на текущей странице.
  * Только URL /dashboard НЕ достаточно — VFS может вернуть shell без auth.
+ * Возвращает: { ok: boolean, btnText: string|null }
  */
 async function verifySession(page) {
-  const START_BTN_SEL = [
-    'button:has-text("Start New Booking")',
-    'button:has-text("Начать новое бронирование")',
-    'button:has-text("Новое бронирование")',
-  ].join(', ');
-
   try {
-    const btnVisible = await page.locator(START_BTN_SEL)
-      .isVisible({ timeout: 10_000 })
-      .catch(() => false);
+    const loc = page.locator(BOOKING_BTN_SEL);
+    const btnVisible = await loc.first().isVisible({ timeout: 10_000 }).catch(() => false);
 
     if (btnVisible) {
-      logger.info('[vfs] Сессия валидна — кнопка Start New Booking найдена');
-      return true;
+      const btnText = await loc.first().textContent({ timeout: 2000 }).catch(() => '');
+      logger.info('[vfs] Dashboard подтвержден. Найдена кнопка: "' + (btnText || '').trim() + '"');
+      return { ok: true, btnText: (btnText || '').trim() };
     }
 
     // Кнопки нет — логируем диагностику
     const bodyText = await page.evaluate(
       () => (document.body.innerText || document.body.textContent || '').slice(0, 300)
     ).catch(() => '');
-    logger.warn('[vfs] Кнопка Start New Booking НЕ найдена. URL: ' + page.url());
+    logger.warn('[vfs] Кнопка записи НЕ найдена. URL: ' + page.url());
     logger.warn('[vfs] Body (300 символов): ' + bodyText.replace(/\s+/g, ' ').trim());
-    return false;
+    return { ok: false, btnText: null };
   } catch (e) {
     logger.warn('[vfs] verifySession error: ' + e.message);
-    return false;
+    return { ok: false, btnText: null };
   }
 }
 
@@ -371,7 +386,7 @@ async function checkSlots(params, onStage = null) {
     } else {
       // URL выглядит как /dashboard, но VFS может вернуть shell без auth.
       // Проверяем наличие реальной UI-кнопки "Start New Booking".
-      const sessionOk = await verifySession(page);
+      const { ok: sessionOk } = await verifySession(page);
       if (sessionOk) {
         if (onStage) await onStage('login', 'Сессия активна, вход пропущен');
       } else {
@@ -391,24 +406,20 @@ async function checkSlots(params, onStage = null) {
     // Правильный путь: кликнуть "Start New Booking" на dashboard, как это делает пользователь.
     await randomDelay(2000, 3500);
 
-    const START_BTN_SEL = [
-      'button:has-text("Start New Booking")',
-      'button:has-text("Начать новое бронирование")',
-      'button:has-text("Новое бронирование")',
-    ].join(', ');
-
-    const startBtn = page.locator(START_BTN_SEL).first();
-    const startBtnOk = await startBtn.isVisible({ timeout: 10_000 }).catch(() => false);
+    // BOOKING_BTN_SEL определён выше (глобальная константа модуля)
+    const startBtnLoc = page.locator(BOOKING_BTN_SEL).first();
+    const startBtnOk  = await startBtnLoc.isVisible({ timeout: 10_000 }).catch(() => false);
 
     if (startBtnOk) {
-      logger.info('[vfs] Найден dashboard, кликаем Start New Booking');
-      logger.info('[vfs] Переход к book-appointment через UI');
-      await startBtn.click();
+      const btnLabel = await startBtnLoc.textContent({ timeout: 2000 }).catch(() => '');
+      logger.info('[vfs] Dashboard подтвержден. Найдена кнопка: "' + (btnLabel || '').trim() + '"');
+      logger.info('[vfs] Переход к форме записи через UI-кнопку');
+      await startBtnLoc.click();
       await randomDelay(1500, 2500);
       await page.waitForLoadState('networkidle', { timeout: 30_000 }).catch(() => {});
     } else {
-      // Fallback: прямой URL (старое поведение)
-      logger.warn('[vfs] Кнопка Start New Booking не найдена — fallback: прямой URL');
+      // Fallback: прямой URL (если кнопка не найдена — нестандартная локаль)
+      logger.warn('[vfs] Кнопка записи не найдена — fallback: прямой URL /book-appointment');
       await page.goto(`${baseUrl}/book-appointment`, { waitUntil: 'networkidle', timeout: 60_000 });
 
       // Проверяем 403201 при прямом переходе
@@ -433,8 +444,10 @@ async function checkSlots(params, onStage = null) {
       if (onStage) await onStage('login', 'Авторизация успешна');
       await randomDelay(1000, 2000);
       // После перелогина снова пробуем через UI-кнопку
-      const startBtn2 = page.locator(START_BTN_SEL).first();
+      const startBtn2 = page.locator(BOOKING_BTN_SEL).first();
       if (await startBtn2.isVisible({ timeout: 8000 }).catch(() => false)) {
+        const btn2Label = await startBtn2.textContent({ timeout: 2000 }).catch(() => '');
+        logger.info('[vfs] После перелогина. Кнопка: "' + (btn2Label || '').trim() + '"');
         await startBtn2.click();
         await randomDelay(1500, 2500);
         await page.waitForLoadState('networkidle', { timeout: 30_000 }).catch(() => {});

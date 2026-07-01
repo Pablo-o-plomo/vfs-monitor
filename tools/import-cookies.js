@@ -306,8 +306,14 @@ async function verifyCookies(cookies, countryCode) {
   const dashUrl = `https://visa.vfsglobal.com/rus/ru/${countryCode}/dashboard`;
   const START_BTN = [
     'button:has-text("Start New Booking")',
+    'button:has-text("New Booking")',
     'button:has-text("Начать новое бронирование")',
     'button:has-text("Новое бронирование")',
+    'button:has-text("Записаться на прием")',
+    'button:has-text("Записаться на приём")',
+    '[role="button"]:has-text("Записаться на прием")',
+    '[role="button"]:has-text("Записаться на приём")',
+    '[role="button"]:has-text("Start New Booking")',
   ].join(', ');
 
   console.log(`🌐 Открываю браузер → ${dashUrl}`);
@@ -331,9 +337,12 @@ async function verifyCookies(cookies, countryCode) {
       return;
     }
 
-    const btnOk = await page.locator(START_BTN).isVisible({ timeout: 10_000 }).catch(() => false);
+    const btnLoc = page.locator(START_BTN);
+    const btnOk = await btnLoc.first().isVisible({ timeout: 10_000 }).catch(() => false);
     if (btnOk) {
-      console.log('\n✅ Верификация УСПЕШНА: кнопка "Start New Booking" найдена!');
+      const btnText = await btnLoc.first().textContent({ timeout: 2000 }).catch(() => '');
+      console.log('\n✅ Верификация УСПЕШНА!');
+      console.log('   Dashboard подтвержден. Найдена кнопка: "' + (btnText || '').trim() + '"');
       console.log('   Сессия активна. Worker подхватит её при следующей проверке.\n');
     } else {
       const body = await page.evaluate(() => (document.body.innerText || '').slice(0, 200)).catch(() => '');
