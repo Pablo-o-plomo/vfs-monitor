@@ -184,7 +184,14 @@ router.post('/requests/:id/resume', async (req, res, next) => {
   try {
     await query("UPDATE visa_requests SET status='active', updated_at=NOW() WHERE id=$1", [req.params.id]);
     await query(
-      "UPDATE monitoring_jobs SET next_check_at=NOW(), status='idle', error_count=0 WHERE request_id=$1",
+      `UPDATE monitoring_jobs
+         SET next_check_at = NOW(),
+             status        = 'idle',
+             state         = 'waiting',
+             error_count   = 0,
+             retry_count   = 0,
+             retry_at      = NULL
+       WHERE request_id = $1`,
       [req.params.id]
     );
     res.redirect(`/requests/${req.params.id}`);
@@ -201,9 +208,4 @@ router.post('/requests/:id/done', async (req, res, next) => {
 router.post('/requests/:id/delete', async (req, res, next) => {
   try {
     const { rows: [vr] } = await query('SELECT client_id FROM visa_requests WHERE id=$1', [req.params.id]);
-    await query('DELETE FROM visa_requests WHERE id=$1', [req.params.id]);
-    res.redirect(vr ? `/clients/${vr.client_id}` : '/clients');
-  } catch (e) { next(e); }
-});
-
-module.exports = router;
+    await query('DELETE FROM v
