@@ -210,4 +210,68 @@ router.post('/requests/:id/clear-error', async (req, res, next) => {
     await query(`
       UPDATE monitoring_jobs
          SET last_error   = NULL,
-      
+                   error_count  = 0,
+             retry_count  = 0,
+             retry_at     = NULL,
+             state        = 'waiting',
+             status       = 'idle',
+             next_check_at = NOW()
+       WHERE request_id = $1
+    `, [req.params.id]);
+    res.redirect(`/requests/${req.params.id}`);
+  } catch (e) { next(e); }
+});
+
+// ─── Сохранить данные заявителя ───────────────────────────────────────────────
+
+router.post('/requests/:id/applicant', async (req, res, next) => {
+  try {
+    const {
+      first_name, last_name, birth_date, gender, citizenship,
+      passport_num, passport_exp, applicant_email, applicant_phone,
+      comment, auto_book,
+    } = req.body;
+
+    await query(`
+      UPDATE visa_requests SET
+        first_name       = $1,
+        last_name        = $2,
+        birth_date       = $3,
+        gender           = $4,
+        citizenship      = $5,
+        passport_num     = $6,
+        passport_exp     = $7,
+        applicant_email  = $8,
+        applicant_phone  = $9,
+        comment          = $10,
+        auto_book        = $11,
+        updated_at       = NOW()
+      WHERE id = $12
+    `, [
+      first_name       || null,
+      last_name        || null,
+      birth_date       || null,
+      gender           || null,
+      citizenship      || null,
+      passport_num     || null,
+      passport_exp     || null,
+      applicant_email  || null,
+      applicant_phone  || null,
+      comment          || null,
+      auto_book === 'on' || auto_book === 'true' || false,
+      req.params.id,
+    ]);
+
+    res.redirect(`/requests/${req.params.id}`);
+  } catch (e) { next(e); }
+});
+
+router.post('/requests/:id/delete', async (req, res, next) => {
+  try {
+    const { rows: [vr] } = await query('SELECT client_id FROM visa_requests WHERE id=$1', [req.params.id]);
+    await query('DELETE FROM visa_requests WHERE id=$1', [req.params.id]);
+    res.redirect(vr ? `/clients/${vr.client_id}` : '/clients');
+  } catch (e) { next(e); }
+});
+
+module.exports = router;
