@@ -236,13 +236,6 @@ async function processRequest(vr, job) {
       } else {
         await logStage(reqId, jobId, 'slot_found', `Найдено слотов: ${slots.length}`);
       }
-      // URL и заголовок страницы (из результата vfs.js)
-      if (result.pageUrl) {
-        await logStage(reqId, jobId, 'url_info', `URL: ${result.pageUrl}`);
-      }
-      if (result.pageTitle) {
-        await logStage(reqId, jobId, 'page_info', `Заголовок: ${result.pageTitle}`);
-      }
       await logStage(reqId, jobId, 'done', `Проверка завершена за ${elapsedSec} сек`);
     }
 
