@@ -155,7 +155,7 @@ router.get('/requests/:id', async (req, res, next) => {
       SELECT * FROM notifications WHERE request_id = $1 ORDER BY sent_at DESC LIMIT 20
     `, [req.params.id]);
 
-    res.render('requests/show', { vr, slots, history, notifications });
+    res.render('requests/show', { vr, slots, history, notifications, countries: COUNTRIES });
   } catch (e) { next(e); }
 });
 
@@ -305,6 +305,84 @@ router.post('/requests/:id/check-now', async (req, res, next) => {
     res.redirect(`/requests/${req.params.id}`);
   } catch (e) { next(e); }
 });
+
+// ─── Обновить параметры поиска ────────────────────────────────────────────────
+
+router.post('/requests/:id/params', async (req, res, next) => {
+  try {
+    const {
+      country_code, center, category, subcategory, date_from, date_to,
+    } = req.body;
+
+    const countryLabel = COUNTRIES.find(c => c.code === country_code)?.name || country_code;
+
+    // 1. Обновляем параметры поиска в visa_requests
+    await query(`
+      UPDATE visa_requests SET
+        country_code = $1,
+        country_name = $2,
+        center       = $3,
+        category     = $4,
+        subcategory  = $5,
+        date_from    = $6,
+        date_to      = $7,
+        updated_at   = NOW()
+      WHERE id = $8
+    `, [
+      country_code || 'hun',
+      countryLabel,
+      center,
+      category,
+      subcategory,
+      date_from,
+      date_to,
+      req.params.id,
+    ]);
+
+    // 2. Сбрасываем monitoring_job в waiting, очищаем ошибку
+    await query(`
+      UPDATE monitoring_jobs SET
+        state            = 'waiting',
+        status           = 'idle',
+        job_stage        = 'waiting',
+        stage_updated_at = NOW(),
+        next_check_at    = NOW(),
+        last_error       = NULL,
+        error_count      = 0,
+        retry_count      = 0,
+        retry_at         = NULL
+      WHERE request_id = $1
+    `, [req.params.id]);
+
+    // 3. Очищаем stage_log (историю проверок check_history НЕ трогаем)
+    await query('DELETE FROM stage_log WHERE request_id = $1', [req.params.id]);
+
+    // 4. Записываем в stage_log факт обновления параметров
+    const { rows: [job] } = await query(
+      'SELECT id FROM monitoring_jobs WHERE request_id = $1',
+      [req.params.id]
+    );
+    const jobId = job?.id || null;
+
+    const logEntries = [
+      ['params_updated', '⚙️ Параметры поиска обновлены'],
+      ['params_updated', `📍 Центр: ${center}`],
+      ['params_updated', `🧾 Категория: ${category}`],
+      ['params_updated', `🧾 Подкатегория: ${subcategory}`],
+      ['params_updated', `📅 Даты: ${date_from} — ${date_to}`],
+    ];
+    for (const [stage, message] of logEntries) {
+      await query(
+        'INSERT INTO stage_log(request_id, job_id, stage, message) VALUES($1,$2,$3,$4)',
+        [req.params.id, jobId, stage, message]
+      );
+    }
+
+    res.redirect(`/requests/${req.params.id}`);
+  } catch (e) { next(e); }
+});
+
+// ─── Удалить заявку ───────────────────────────────────────────────────────────
 
 router.post('/requests/:id/delete', async (req, res, next) => {
   try {

@@ -7,10 +7,10 @@
 
 <div class="detail-header">
   <div>
-    <h1>🌍 <%= vr.country_name %> — <%= vr.center %></h1>
-    <div class="meta" style="margin-top:6px">
-      <%= vr.category %> / <%= vr.subcategory %> &nbsp;•&nbsp;
-      <%= fmt.date(vr.date_from) %> — <%= fmt.date(vr.date_to) %>
+    <h1>🌍 <%= vr.country_name %> / <%= vr.center %></h1>
+    <div class="meta" style="margin-top:4px;line-height:1.7">
+      <span><%= vr.category %> / <%= vr.subcategory %></span><br>
+      <span>📅 <%= fmt.date(vr.date_from) %> — <%= fmt.date(vr.date_to) %></span>
     </div>
   </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -27,6 +27,10 @@
       <form action="/requests/<%= vr.id %>/check-now" method="POST">
         <button class="btn btn-success btn-sm">🔄 Проверить сейчас</button>
       </form>
+      <button type="button" class="btn btn-ghost btn-sm"
+        onclick="document.getElementById('params-form-card').classList.toggle('hidden');document.getElementById('params-form-card').scrollIntoView({behavior:'smooth',block:'start'})">
+        ⚙️ Параметры поиска
+      </button>
     <% } else if (vr.status === 'paused' || vr.status === 'error') { %>
       <form action="/requests/<%= vr.id %>/resume" method="POST">
         <button class="btn btn-success btn-sm">▶ Возобновить</button>
@@ -76,6 +80,75 @@
   </div>
 </div>
 <% } %>
+
+<!-- Форма редактирования параметров поиска -->
+<div id="params-form-card" class="card hidden" style="margin-bottom:20px;border:2px solid var(--accent)">
+  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
+    <span>⚙️ Параметры поиска</span>
+    <button type="button" class="btn btn-ghost btn-sm"
+      onclick="document.getElementById('params-form-card').classList.add('hidden')">✕ Закрыть</button>
+  </div>
+  <div style="padding:16px 20px">
+    <form action="/requests/<%= vr.id %>/params" method="POST">
+      <div class="settings-inline">
+
+        <div class="form-group">
+          <label>Страна</label>
+          <select name="country_code" id="params-country">
+            <% countries.forEach(function(c) { %>
+              <option value="<%= c.code %>" <%= vr.country_code === c.code ? 'selected' : '' %>><%= c.name %></option>
+            <% }); %>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Визовый центр</label>
+          <input type="text" id="params-center" name="center" value="<%= vr.center %>"
+            placeholder="Визовый центр Венгрии,Краснодар">
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="setParamsCenter('Краснодар')">🏙 Краснодар</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="setParamsCenter('Москва')">🏙 Москва</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="setParamsCenter('Ростов-на-Дону')">🏙 Ростов</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="setParamsCenter('Санкт-Петербург')">🏙 СПб</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Категория</label>
+          <input type="text" name="category" value="<%= vr.category %>"
+            placeholder="Краткосрочные визы">
+        </div>
+
+        <div class="form-group">
+          <label>Подкатегория</label>
+          <input type="text" name="subcategory" value="<%= vr.subcategory %>"
+            placeholder="Туризм">
+        </div>
+
+        <div class="form-group">
+          <label>Дата от</label>
+          <input type="date" name="date_from"
+            value="<%= vr.date_from ? (vr.date_from.toISOString ? vr.date_from.toISOString().slice(0,10) : String(vr.date_from).slice(0,10)) : '' %>">
+        </div>
+
+        <div class="form-group">
+          <label>Дата до</label>
+          <input type="date" name="date_to"
+            value="<%= vr.date_to ? (vr.date_to.toISOString ? vr.date_to.toISOString().slice(0,10) : String(vr.date_to).slice(0,10)) : '' %>">
+        </div>
+
+      </div>
+      <div class="form-actions" style="margin-top:14px">
+        <button type="submit" class="btn btn-primary btn-sm">💾 Сохранить параметры</button>
+        <button type="button" class="btn btn-ghost btn-sm"
+          onclick="document.getElementById('params-form-card').classList.add('hidden')">Отмена</button>
+      </div>
+    </form>
+    <div class="meta" style="margin-top:10px;font-size:12px">
+      ℹ️ После сохранения лог текущей проверки будет очищен, следующая проверка запустится немедленно.
+    </div>
+  </div>
+</div>
 
 <!-- Live статус worker -->
 <div class="card" style="margin-bottom:20px">
@@ -463,6 +536,18 @@
 </style>
 
 <script>
+// Быстрая смена города визового центра — адаптируется к выбранной стране
+function setParamsCenter(city) {
+  var countryMap = {
+    hun:'Венгрии', deu:'Германии', fra:'Франции', ita:'Италии', esp:'Испании',
+    grc:'Греции',  cze:'Чехии',   aut:'Австрии', pol:'Польши', svk:'Словакии'
+  };
+  var code = (document.getElementById('params-country') || {}).value || 'hun';
+  var cname = countryMap[code] || 'Венгрии';
+  var el = document.getElementById('params-center');
+  if (el) el.value = 'Визовый центр ' + cname + ',' + city;
+}
+
 (function () {
   var REQUEST_ID = '<%= vr.id %>';
 
@@ -495,6 +580,7 @@
     retry:             '🔄',
     error:             '🚨',
     running:           '⚙',
+    params_updated:    '⚙️',
   };
 
   var STAGE_LABELS = {
@@ -519,135 +605,4 @@
     confirming:        'Подтверждает запись',
     booked:            'Запись оформлена',
     booking_failed:    'Ошибка бронирования',
-    done:              'Проверка завершена',
-    screenshot:        'Скриншот сохранён',
-    url_info:          'URL страницы',
-    page_info:         'Заголовок страницы',
-    retry:             'Повтор через несколько минут',
-    error:             'Ошибка',
-    running:           'Идёт проверка...',
-  };
-
-  var secondsUntil = null;
-  var timerInterval = null;
-
-  function fmtCountdown(sec) {
-    if (sec == null) return '—';
-    if (sec <= 0) return '<span style="color:var(--green);font-weight:600">⏳ сейчас...</span>';
-    if (sec < 60) return 'через ' + sec + ' сек';
-    var m = Math.floor(sec / 60), s = sec % 60;
-    return 'через ' + m + ' мин ' + (s > 0 ? s + ' сек' : '');
-  }
-
-  function fmtDatetime(iso) {
-    return iso ? new Date(iso).toLocaleString('ru-RU') : '—';
-  }
-
-  function setEl(id, html) {
-    var el = document.getElementById(id);
-    if (el) el.innerHTML = html;
-  }
-  function setTxt(id, txt) {
-    var el = document.getElementById(id);
-    if (el) el.textContent = txt;
-  }
-
-  function startTimer() {
-    if (timerInterval) clearInterval(timerInterval);
-    timerInterval = setInterval(function () {
-      if (secondsUntil != null && secondsUntil > 0) secondsUntil--;
-      setEl('live-timer', fmtCountdown(secondsUntil));
-    }, 1000);
-  }
-
-  async function refresh() {
-    try {
-      var r = await fetch('/api/requests/' + REQUEST_ID + '/live');
-      if (!r.ok) return;
-      var d = await r.json();
-
-      // обновляем таймер
-      secondsUntil = d.seconds_until;
-      setEl('live-timer', fmtCountdown(secondsUntil));
-      setTxt('live-last-check', fmtDatetime(d.last_check_at));
-      setTxt('live-total-checks', d.total_checks || '0');
-
-      var errEl = document.getElementById('live-error-count');
-      if (errEl) {
-        errEl.textContent = d.error_count || '0';
-        errEl.style.color = parseInt(d.error_count) > 0 ? 'var(--red)' : 'inherit';
-      }
-
-      // стадия
-      var stage = d.stage || 'waiting';
-      var icon  = STAGE_ICONS[stage] || '⚙';
-      var label = STAGE_LABELS[stage] || stage;
-
-      setTxt('stage-icon', icon);
-      setTxt('stage-label', label);
-      if (d.stage_updated_at) {
-        setTxt('stage-time', 'с ' + new Date(d.stage_updated_at).toLocaleTimeString('ru-RU'));
-      }
-
-      // цвет блока стадии
-      var stageBlock = document.getElementById('stage-block');
-      if (stageBlock) {
-        if (stage === 'booked')          stageBlock.style.background = 'rgba(34,197,94,0.12)';
-        else if (stage === 'booking_failed' || stage === 'error') stageBlock.style.background = 'rgba(239,68,68,0.10)';
-        else if (stage === 'slot_found' || stage === 'filling_applicant' || stage === 'selecting_time' || stage === 'booking') stageBlock.style.background = 'rgba(59,130,246,0.10)';
-        else if (stage === 'checking_slots' || stage === 'opening_vfs' || stage === 'running') stageBlock.style.background = 'rgba(245,158,11,0.10)';
-        else stageBlock.style.background = 'var(--bg2)';
-      }
-
-      // блок ошибки
-      var errBlock = document.getElementById('live-error-block');
-      if (errBlock) {
-        if (d.last_error && d.job_status !== 'running') {
-          errBlock.style.display = 'block';
-          var errDetail = document.getElementById('live-error-detail');
-          if (errDetail) errDetail.textContent = d.last_error;
-        } else {
-          errBlock.style.display = 'none';
-        }
-      }
-
-      // лог активности
-      if (d.stage_log) renderActivityLog(d.stage_log);
-
-      setTxt('live-updated', 'обновлено ' + new Date().toLocaleTimeString('ru-RU'));
-
-    } catch (e) {
-      setTxt('live-updated', '⚠ ошибка');
-    }
-  }
-
-  function renderActivityLog(log) {
-    var el = document.getElementById('activity-log');
-    if (!el) return;
-    if (!log || !log.length) {
-      el.innerHTML = '<div class="meta" style="font-size:13px">Лог появится после запуска проверки.</div>';
-      return;
-    }
-    var html = '<div style="font-family:monospace;font-size:13px;line-height:1.9">';
-    log.forEach(function(entry) {
-      var t  = new Date(entry.logged_at).toLocaleTimeString('ru-RU');
-      var ic = STAGE_ICONS[entry.stage] || '·';
-      var msg = entry.message || entry.stage || '';
-      html += '<div style="display:flex;gap:10px">'
-            + '<span class="meta" style="flex-shrink:0;min-width:70px">' + t + '</span>'
-            + '<span style="flex-shrink:0">' + ic + '</span>'
-            + '<span>' + msg + '</span>'
-            + '</div>';
-    });
-    html += '</div>';
-    el.innerHTML = html;
-    // Автоскролл к последней записи
-    el.scrollTop = el.scrollHeight;
-    setTxt('log-updated', 'обновлено ' + new Date().toLocaleTimeString('ru-RU'));
-  }
-
-  startTimer();
-  refresh();
-  setInterval(refresh, 5000);
-})();
-</script>
+    done:              'Проверка з�
