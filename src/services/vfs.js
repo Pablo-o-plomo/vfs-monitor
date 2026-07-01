@@ -72,6 +72,7 @@ async function login(page, baseUrl) {
 async function checkSlots(params, onStage = null) {
   const {
     countryCode = 'hun',
+    countryName,
     center,
     category,
     subcategory,
@@ -113,24 +114,26 @@ async function checkSlots(params, onStage = null) {
     await randomDelay(1500, 2500);
 
     if (!page.url().includes('/dashboard')) {
-      if (onStage) await onStage('login');
+      if (onStage) await onStage('login', 'Авторизация');
       await login(page, baseUrl);
     } else {
       logger.info('[vfs] Сессия активна, пропускаем логин');
     }
 
-    if (onStage) await onStage('checking_slots');
+    if (onStage) await onStage('checking_slots', 'Переходим к записи');
 
     // ── 2. Страница записи ────────────────────────────────────────────
     await randomDelay(1000, 2000);
     await page.goto(`${baseUrl}/book-appointment`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     await randomDelay(1500, 3000);
 
-    // ── 3. Выбор визового центра ──────────────────────────────────────
+    // ── 3. Выбор страны и центра ─────────────────────────────────────
     logger.info(`[vfs] Выбираем центр: ${center}`);
-    if (onStage) await onStage('selecting_center');
+    if (onStage) await onStage('selecting_country', `Выбираем ${countryName || countryCode.toUpperCase()}`);
     await selectDropdownByText(page, center, 'Выберите свой Центр приложений');
     await randomDelay(800, 1500);
+
+    if (onStage) await onStage('selecting_center', `Выбираем ${center}`);
 
     // ── 4. Категория ──────────────────────────────────────────────────
     logger.info(`[vfs] Выбираем категорию: ${category}`);
@@ -139,6 +142,7 @@ async function checkSlots(params, onStage = null) {
 
     // ── 5. Подкатегория ───────────────────────────────────────────────
     logger.info(`[vfs] Выбираем подкатегорию: ${subcategory}`);
+    if (onStage) await onStage('checking_slots', `Проверяем «${subcategory}»`);
     await selectDropdownByText(page, subcategory, 'Выберите подкатегорию');
     await randomDelay(1500, 2500); // даём Angular обновить DOM
 
@@ -149,7 +153,7 @@ async function checkSlots(params, onStage = null) {
     const bannerSlots = await parseEarliestSlotBanner(page, dateFrom, dateTo);
     if (bannerSlots.length > 0) {
       logger.info('[vfs] Слот найден через баннер');
-      if (onStage) await onStage('slot_found');
+      if (onStage) await onStage('slot_found', `Найден слот ${bannerSlots[0].date}`);
 
       if (params.autoBook) {
         logger.info('[vfs] auto_book=true → запускаем автобронирование');
@@ -495,7 +499,7 @@ async function attemptBooking(page, params, slotDate, onStage = null) {
 
     // ── 2. Заполнить форму заявителя ────────────────────────────────
     log('Шаг 2: заполняем форму заявителя');
-    if (onStage) await onStage('filling_applicant');
+    if (onStage) await onStage('filling_applicant', 'Заполняем данные заявителя');
     await fillApplicantIfNeeded(page, params);
 
     // ── 3. Ждём календарь ───────────────────────────────────────────
@@ -528,7 +532,7 @@ async function attemptBooking(page, params, slotDate, onStage = null) {
     await randomDelay(1000, 2000);
 
     // ── 5. Выбираем первое доступное время ──────────────────────────
-    if (onStage) await onStage('selecting_time');
+    if (onStage) await onStage('selecting_time', 'Выбираем время');
     log('Шаг 5: выбираем время');
     await page
       .waitForSelector('[class*="time"], button:has-text(":")', { timeout: 15_000 })
@@ -561,7 +565,7 @@ async function attemptBooking(page, params, slotDate, onStage = null) {
     await randomDelay(1000, 2000);
 
     // ── 6. Подтверждаем запись ──────────────────────────────────────
-    if (onStage) await onStage('confirming');
+    if (onStage) await onStage('confirming', 'Подтверждаем запись');
     log('Шаг 6: подтверждаем запись');
     const confirmSelectors = [
       'button:has-text("Подтвердить")',

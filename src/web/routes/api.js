@@ -319,9 +319,11 @@ router.get('/jobs', async (req, res, next) => {
 // ─────────────────────────────────────────────
 
 const STAGE_LABELS = {
+  start:             'Проверка запущена',
   waiting:           'Ожидает проверки',
   opening_vfs:       'Открывает VFS',
   login:             'Авторизация',
+  selecting_country: 'Выбирает страну',
   selecting_center:  'Выбирает визовый центр',
   checking_slots:    'Проверяет наличие слотов',
   slot_found:        'Найден слот',
@@ -361,11 +363,17 @@ router.get('/requests/:id/live', async (req, res, next) => {
 
     if (!data) return res.status(404).json({ error: 'not found' });
 
+    const { rows: stageLogs } = await query(
+      'SELECT stage, message, logged_at FROM stage_log WHERE request_id = $1 ORDER BY logged_at ASC LIMIT 60',
+      [req.params.id]
+    ).catch(() => ({ rows: [] }));
+
     const stage = data.job_stage || data.job_state || 'waiting';
     res.json({
       ...data,
       stage,
       stage_label: STAGE_LABELS[stage] || stage,
+      stage_log: stageLogs,
     });
   } catch (e) { next(e); }
 });

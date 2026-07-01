@@ -93,6 +93,17 @@ async function clearCurrentJob() {
   ).catch(() => {});
 }
 
+async function setStage(reqId, jobId, stage, message = null) {
+  await query(
+    'UPDATE monitoring_jobs SET job_stage=$1, stage_updated_at=NOW() WHERE id=$2',
+    [stage, jobId]
+  ).catch(() => {});
+  await query(
+    'INSERT INTO stage_log(request_id, job_id, stage, message) VALUES($1,$2,$3,$4)',
+    [reqId, jobId, stage, message || null]
+  ).catch(() => {});
+}
+
 async function writeCrash(reason) {
   await query(
     'UPDATE worker_status SET last_crash_at=NOW(), last_crash_reason=$1 WHERE id=1',
@@ -160,19 +171,24 @@ async function processRequest(vr, job) {
 
   // Помечаем job как running + state=running
   await query(
-    "UPDATE monitoring_jobs SET status='running', state='running' WHERE id=$1",
+    "UPDATE monitoring_jobs SET status='running', state='running', job_stage='waiting', stage_updated_at=NOW() WHERE id=$1",
     [jobId]
   );
 
+  // Очищаем лог предыдущего прогона и добавляем старт
+  await query('DELETE FROM stage_log WHERE request_id = $1', [reqId]).catch(() => {});
+  await query(
+    'INSERT INTO stage_log(request_id, job_id, stage, message) VALUES($1,$2,$3,$4)',
+    [reqId, jobId, 'start', 'Проверка запущена']
+  ).catch(() => {});
+
   try {
-    // Обновляем job_state → slot_found перед запуском
-    await query(
-      "UPDATE monitoring_jobs SET state='running' WHERE id=$1",
-      [jobId]
-    );
+    // Стартуем — открываем VFS
+    await setStage(reqId, jobId, 'opening_vfs', 'Запускаем Chromium');
 
     const result = await checkSlots({
       countryCode:    vr.country_code,
+      countryName:    vr.country_name  || null,
       center:         vr.center,
       category:       vr.category,
       subcategory:    vr.subcategory,
@@ -188,6 +204,8 @@ async function processRequest(vr, job) {
       passportExp:    vr.passport_exp    || null,
       applicantEmail: vr.applicant_email || null,
       applicantPhone: vr.applicant_phone || null,
+    }, async (stage, message) => {
+      await setStage(reqId, jobId, stage, message);
     });
 
     // Считаем проверку в browser pool
@@ -356,7 +374,8 @@ async function processRequest(vr, job) {
     const nextAt = nextCheckAt(intervalMin, jitterMin);
     await query(`
       UPDATE monitoring_jobs
-      SET status='idle', state='waiting', last_check_at=NOW(), next_check_at=$1,
+      SET status='idle', state='waiting', job_stage='waiting', stage_updated_at=NOW(),
+          last_check_at=NOW(), next_check_at=$1,
           error_count=0, last_error=NULL, retry_count=0, retry_at=NULL,
           total_checks = COALESCE(total_checks, 0) + 1
       WHERE id=$2
@@ -519,14 +538,4 @@ process.on('unhandledRejection', (reason) => {
   logger.error('[worker] Unhandled Rejection: ' + (reason?.message || String(reason)));
 });
 
-process.on('SIGINT', () => {
-  logger.info('[worker] SIGINT received, shutting down...');
-  process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-  logger.info('[worker] SIGTERM received, shutting down...');
-  process.exit(0);
-});
-
-module.exports = { main };
+pr

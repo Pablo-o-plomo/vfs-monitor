@@ -353,6 +353,17 @@
   </div>
 </div>
 
+<!-- Лог активности (live) -->
+<div class="card" style="margin-bottom:20px">
+  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
+    <span>📋 Лог текущей проверки</span>
+    <span id="log-updated" class="meta" style="font-size:11px"></span>
+  </div>
+  <div id="activity-log" style="padding:14px 20px;min-height:48px">
+    <div class="meta" style="font-size:13px">Ожидаем данные...</div>
+  </div>
+</div>
+
 <!-- История проверок -->
 <div class="card" style="margin-bottom:20px">
   <div class="card-header">
@@ -452,9 +463,11 @@
   var REQUEST_ID = '<%= vr.id %>';
 
   var STAGE_ICONS = {
+    start:             '🔄',
     waiting:           '🟢',
     opening_vfs:       '🌐',
     login:             '🔐',
+    selecting_country: '🌍',
     selecting_center:  '🏢',
     checking_slots:    '🔍',
     slot_found:        '📅',
@@ -469,9 +482,11 @@
   };
 
   var STAGE_LABELS = {
+    start:             'Проверка запущена',
     waiting:           'Ожидает проверки',
     opening_vfs:       'Открывает VFS',
     login:             'Авторизация',
+    selecting_country: 'Выбирает страну',
     selecting_center:  'Выбирает визовый центр',
     checking_slots:    'Проверяет наличие слотов',
     slot_found:        'Найден слот',
@@ -568,11 +583,37 @@
         }
       }
 
+      // лог активности
+      if (d.stage_log) renderActivityLog(d.stage_log);
+
       setTxt('live-updated', 'обновлено ' + new Date().toLocaleTimeString('ru-RU'));
 
     } catch (e) {
       setTxt('live-updated', '⚠ ошибка');
     }
+  }
+
+  function renderActivityLog(log) {
+    var el = document.getElementById('activity-log');
+    if (!el) return;
+    if (!log || !log.length) {
+      el.innerHTML = '<div class="meta" style="font-size:13px">Лог появится после запуска проверки.</div>';
+      return;
+    }
+    var html = '<div style="font-family:monospace;font-size:13px;line-height:1.9">';
+    log.forEach(function(entry) {
+      var t  = new Date(entry.logged_at).toLocaleTimeString('ru-RU');
+      var ic = STAGE_ICONS[entry.stage] || '·';
+      var msg = entry.message || entry.stage || '';
+      html += '<div style="display:flex;gap:10px">'
+            + '<span class="meta" style="flex-shrink:0;min-width:70px">' + t + '</span>'
+            + '<span style="flex-shrink:0">' + ic + '</span>'
+            + '<span>' + msg + '</span>'
+            + '</div>';
+    });
+    html += '</div>';
+    el.innerHTML = html;
+    setTxt('log-updated', 'обновлено ' + new Date().toLocaleTimeString('ru-RU'));
   }
 
   startTimer();
