@@ -178,6 +178,66 @@ async function login(page, baseUrl) {
 
 
 // ─────────────────────────────────────────────
+// ДИАГНОСТИКА СЕССИИ
+// ─────────────────────────────────────────────
+
+/** Логирует краткую информацию о загруженных cookies */
+async function logCookieInfo(page) {
+  try {
+    const cookies = await page.context().cookies().catch(() => []);
+    if (cookies.length === 0) {
+      logger.info('[vfs] Cookies: нет загруженных cookies');
+      return;
+    }
+    const vfsCookies = cookies.filter(c => c.domain && c.domain.includes('vfsglobal'));
+    const now = Math.floor(Date.now() / 1000);
+    const expired = vfsCookies.filter(c => c.expires > 0 && c.expires < now).length;
+    const domains = [...new Set(cookies.map(c => c.domain).filter(Boolean))].slice(0, 5).join(', ');
+    logger.info(
+      '[vfs] Cookies загружено: ' + cookies.length +
+      ' всего, ' + vfsCookies.length + ' VFS, ' + expired + ' истекших. Домены: ' + domains
+    );
+  } catch (e) {
+    logger.warn('[vfs] logCookieInfo error: ' + e.message);
+  }
+}
+
+/**
+ * Проверяет что сессия VFS реально активна:
+ * ищет кнопку "Start New Booking" на текущей странице.
+ * Только URL /dashboard НЕ достаточно — VFS может вернуть shell без auth.
+ */
+async function verifySession(page) {
+  const START_BTN_SEL = [
+    'button:has-text("Start New Booking")',
+    'button:has-text("Начать новое бронирование")',
+    'button:has-text("Новое бронирование")',
+  ].join(', ');
+
+  try {
+    const btnVisible = await page.locator(START_BTN_SEL)
+      .isVisible({ timeout: 10_000 })
+      .catch(() => false);
+
+    if (btnVisible) {
+      logger.info('[vfs] Сессия валидна — кнопка Start New Booking найдена');
+      return true;
+    }
+
+    // Кнопки нет — логируем диагностику
+    const bodyText = await page.evaluate(
+      () => (document.body.innerText || document.body.textContent || '').slice(0, 300)
+    ).catch(() => '');
+    logger.warn('[vfs] Кнопка Start New Booking НЕ найдена. URL: ' + page.url());
+    logger.warn('[vfs] Body (300 символов): ' + bodyText.replace(/\s+/g, ' ').trim());
+    return false;
+  } catch (e) {
+    logger.warn('[vfs] verifySession error: ' + e.message);
+    return false;
+  }
+}
+
+// ─────────────────────────────────────────────
 // ДИАГНОСТИКА ОШИБОК — СОХРАНЕНИЕ АРТЕФАКТОВ
 // ─────────────────────────────────────────────
 
@@ -299,13 +359,29 @@ async function checkSlots(params, onStage = null) {
     await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     await randomDelay(1500, 2500);
 
-    if (!page.url().includes('/dashboard')) {
+    // Логируем состояние cookies ПЕРЕД проверкой сессии
+    await logCookieInfo(page);
+    logger.info('[vfs] URL после goto dashboard: ' + page.url());
+
+    if (page.url().includes('/login')) {
+      // Явный редирект на /login — нужна авторизация
       if (onStage) await onStage('login', 'Авторизация');
       await login(page, baseUrl);
       if (onStage) await onStage('login', 'Авторизация успешна');
     } else {
-      logger.info('[vfs] Сессия активна, пропускаем логин');
-      if (onStage) await onStage('login', 'Сессия активна, вход пропущен');
+      // URL выглядит как /dashboard, но VFS может вернуть shell без auth.
+      // Проверяем наличие реальной UI-кнопки "Start New Booking".
+      const sessionOk = await verifySession(page);
+      if (sessionOk) {
+        if (onStage) await onStage('login', 'Сессия активна, вход пропущен');
+      } else {
+        const err = new Error(
+          'SESSION_INVALID: VFS session invalid or expired; manual login required. ' +
+          'Import cookies: node tools/import-cookies.js hun cookies-hun.json'
+        );
+        err.isSessionInvalid = true;
+        throw err;
+      }
     }
 
     if (onStage) await onStage('checking_slots', 'Переходим к форме записи');
@@ -338,9 +414,14 @@ async function checkSlots(params, onStage = null) {
       // Проверяем 403201 при прямом переходе
       const bodyAfterGoto = await page.evaluate(() => document.body?.innerText || '').catch(() => '');
       if (bodyAfterGoto.includes('"code"') && bodyAfterGoto.includes('403')) {
-        logger.warn('[vfs] book-appointment вернул JSON-ошибку: ' + bodyAfterGoto.slice(0, 120));
-        await sleep(2000);
-        await page.reload({ waitUntil: 'networkidle', timeout: 60_000 }).catch(() => {});
+        logger.warn('[vfs] book-appointment вернул JSON 403201 — session invalid');
+        logger.warn('[vfs] Body: ' + bodyAfterGoto.slice(0, 300));
+        const err = new Error(
+          'SESSION_INVALID: book-appointment ответил 403201 — сессия истекла. ' +
+          'Import cookies: node tools/import-cookies.js hun cookies-hun.json'
+        );
+        err.isSessionInvalid = true;
+        throw err;
       }
     }
 

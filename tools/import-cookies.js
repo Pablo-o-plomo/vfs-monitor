@@ -276,6 +276,76 @@ async function main() {
   } finally {
     await pool.end();
   }
+
+  // Опциональная верификация: --verify / -v
+  if (args.includes('--verify') || args.includes('-v')) {
+    console.log('\n🔍 Запускаем верификацию сессии...');
+    await verifyCookies(cookies, countryCode);
+  } else {
+    console.log('   💡 Для проверки сессии запустите с --verify:');
+    console.log(`   node tools/import-cookies.js ${countryCode} ${cookiesFile} --verify\n`);
+  }
+}
+
+// ─────────────────────────────────────────────
+// VERIFY SESSION
+// Открываем headless Chrome с импортированными cookies,
+// переходим на /dashboard и проверяем кнопку Start New Booking.
+// ─────────────────────────────────────────────
+
+async function verifyCookies(cookies, countryCode) {
+  try { require.resolve('playwright-extra'); } catch (_) {
+    console.warn('⚠️  playwright-extra не установлен, верификация пропущена.');
+    console.warn('   Запустите: npm install playwright-extra puppeteer-extra-plugin-stealth');
+    return;
+  }
+  const { chromium } = require('playwright-extra');
+  const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+  chromium.use(StealthPlugin());
+
+  const dashUrl = `https://visa.vfsglobal.com/rus/ru/${countryCode}/dashboard`;
+  const START_BTN = [
+    'button:has-text("Start New Booking")',
+    'button:has-text("Начать новое бронирование")',
+    'button:has-text("Новое бронирование")',
+  ].join(', ');
+
+  console.log(`🌐 Открываю браузер → ${dashUrl}`);
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const ctx  = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+      locale: 'ru-RU',
+    });
+    await ctx.addCookies(cookies);
+    const page = await ctx.newPage();
+    await page.goto(dashUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => {});
+
+    const finalUrl = page.url();
+    console.log(`   URL: ${finalUrl}`);
+
+    if (finalUrl.includes('/login')) {
+      console.error('\n❌ Верификация ПРОВАЛЕНА: сессия невалидна (редирект на /login)');
+      console.error('   Войдите в VFS вручную и экспортируйте cookies заново.\n');
+      return;
+    }
+
+    const btnOk = await page.locator(START_BTN).isVisible({ timeout: 10_000 }).catch(() => false);
+    if (btnOk) {
+      console.log('\n✅ Верификация УСПЕШНА: кнопка "Start New Booking" найдена!');
+      console.log('   Сессия активна. Worker подхватит её при следующей проверке.\n');
+    } else {
+      const body = await page.evaluate(() => (document.body.innerText || '').slice(0, 200)).catch(() => '');
+      console.error('\n❌ Верификация ПРОВАЛЕНА: кнопка Start New Booking не найдена');
+      console.error('   Body: ' + body.replace(/\s+/g, ' ').trim());
+      console.error('   Войдите в VFS вручную и экспортируйте cookies заново.\n');
+    }
+  } catch (e) {
+    console.error('⚠️  Ошибка верификации: ' + e.message);
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
 }
 
 main().catch(e => {

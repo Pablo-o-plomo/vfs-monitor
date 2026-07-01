@@ -440,6 +440,30 @@ async function processRequest(vr, job) {
       return; // НЕ идём в общий retry
     }
 
+    // ── SESSION_INVALID: сессия истекла, не retry каждые 5 мин ──────────────
+    if (err.isSessionInvalid || (err.message && err.message.startsWith('SESSION_INVALID'))) {
+      logger.warn(`[worker] Заявка #${reqId}: VFS session invalid — требуется импорт cookies`);
+      await setStage(reqId, jobId, 'login_manual_required',
+        'VFS session invalid or expired. Импортируйте cookies: node tools/import-cookies.js hun cookies-hun.json');
+      const retryAt = new Date(Date.now() + 2 * 60 * 60 * 1000); // +2 часа
+      await query(`
+        UPDATE monitoring_jobs
+        SET status='idle', state='waiting', last_check_at=NOW(),
+            next_check_at=$1, retry_count=0,
+            last_error='SESSION_INVALID: сессия VFS истекла — запустите tools/import-cookies.js',
+            total_checks = COALESCE(total_checks, 0) + 1
+        WHERE id=$2
+      `, [retryAt, jobId]);
+      await writeHistory({
+        requestId: reqId,
+        jobId,
+        result:   'error',
+        errorMsg: 'SESSION_INVALID: сессия VFS истекла, требуется ручной импорт cookies',
+      });
+      await clearCurrentJob();
+      return; // НЕ идём в общий retry
+    }
+
     const errElapsed = Math.round((Date.now() - startedAt) / 1000);
     await logStage(reqId, jobId, 'error',
       `Ошибка проверки: ${String(err.message).slice(0, 200)} · ${errElapsed} сек`);
