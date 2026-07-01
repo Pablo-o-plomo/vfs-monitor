@@ -171,7 +171,7 @@ async function login(page, baseUrl) {
 
   if (onDashboard || startBtnAfterLogin) {
     logger.info('[vfs] Успешный вход (dashboard=' + onDashboard + ', startBtn=' + startBtnAfterLogin + ')');
-    await saveSession();
+    await saveSession(page); // передаём page для сохранения localStorage/sessionStorage
     return;
   }
 
@@ -1112,4 +1112,4 @@ async function attemptBooking(page, params, slotDate, onStage) {
   }
 }
 
-module.exports = { checkSlots };
+module.export
