@@ -20,6 +20,8 @@
 const { newPage, saveSession, randomDelay, sleep } = require('../browser');
 const logger = require('../logger');
 const config = require('../config');
+const fs   = require('fs');
+const path = require('path');
 
 // ─────────────────────────────────────────────
 // ЛОГИН
@@ -65,12 +67,41 @@ async function login(page, baseUrl) {
   throw new Error('Не удалось войти в VFS Global. Проверьте VFS_EMAIL / VFS_PASSWORD.');
 }
 
+
+// ─────────────────────────────────────────────
+// ДИАГНОСТИКА ОШИБОК — СОХРАНЕНИЕ АРТЕФАКТОВ
+// ─────────────────────────────────────────────
+
+async function saveErrorArtifacts(page, requestId) {
+  if (!page || !requestId) return null;
+  try {
+    const dir = path.join(process.cwd(), 'artifacts', `request_${requestId}`);
+    fs.mkdirSync(dir, { recursive: true });
+
+    const screenshotPath = path.join(dir, 'last-error.png');
+    await page.screenshot({ path: screenshotPath, fullPage: true })
+      .catch(e => logger.warn('[vfs] screenshot failed: ' + e.message));
+
+    const html = await page.content().catch(() => '');
+    if (html) fs.writeFileSync(path.join(dir, 'last-error.html'), html, 'utf-8');
+
+    const url   = page.url();
+    const title = await page.title().catch(() => '');
+    logger.info(`[vfs] Артефакты ошибки сохранены: ${dir}`);
+    return { url, title };
+  } catch (e) {
+    logger.warn('[vfs] Не удалось сохранить артефакты ошибки: ' + e.message);
+    return null;
+  }
+}
+
 // ─────────────────────────────────────────────
 // ГЛАВНАЯ ФУНКЦИЯ — принимает params из БД
 // ─────────────────────────────────────────────
 
 async function checkSlots(params, onStage = null) {
   const {
+    requestId,
     countryCode = 'hun',
     countryName,
     center,
@@ -201,6 +232,15 @@ async function checkSlots(params, onStage = null) {
 
     return { slots: filterByDateRange(capturedSlots, dateFrom, dateTo), booking: null };
 
+  } catch (err) {
+    // Сохраняем скриншот и HTML при любой ошибке проверки
+    const artifacts = await saveErrorArtifacts(page, requestId);
+    if (artifacts) {
+      err._artifactSaved = true;
+      err._artifactUrl   = artifacts.url;
+      err._artifactTitle = artifacts.title;
+    }
+    throw err;
   } finally {
     await page.close();
   }

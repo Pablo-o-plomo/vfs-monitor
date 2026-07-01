@@ -6,6 +6,8 @@
 
 const express = require('express');
 const { query } = require('../../db');
+const fs   = require('fs');
+const path = require('path');
 
 const router = express.Router();
 
@@ -310,6 +312,17 @@ router.post('/requests/:id/delete', async (req, res, next) => {
     await query('DELETE FROM visa_requests WHERE id=$1', [req.params.id]);
     res.redirect(vr ? `/clients/${vr.client_id}` : '/clients');
   } catch (e) { next(e); }
+});
+
+// ─── Артефакты диагностики ─────────────────────────────────────────────────
+
+router.get('/requests/:id/artifacts/:file', (req, res) => {
+  const allowed = ['last-error.png', 'last-error.html'];
+  const { id, file } = req.params;
+  if (!allowed.includes(file)) return res.status(404).end();
+  const absPath = path.resolve(process.cwd(), 'artifacts', `request_${id}`, file);
+  if (!fs.existsSync(absPath)) return res.status(404).send('Файл не найден. Скриншот появится после следующей ошибки проверки.');
+  res.sendFile(absPath);
 });
 
 module.exports = router;

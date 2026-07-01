@@ -197,6 +197,7 @@ async function processRequest(vr, job) {
     await setStage(reqId, jobId, 'opening_vfs', 'Запускаем Chromium');
 
     const result = await checkSlots({
+      requestId:      reqId,
       countryCode:    vr.country_code,
       countryName:    vr.country_name  || null,
       center:         vr.center,
@@ -418,6 +419,17 @@ async function processRequest(vr, job) {
     const errElapsed = Math.round((Date.now() - startedAt) / 1000);
     await logStage(reqId, jobId, 'error',
       `Ошибка проверки: ${String(err.message).slice(0, 200)} · ${errElapsed} сек`);
+
+    // Артефакты диагностики (скриншот + HTML), если vfs.js их сохранил
+    if (err._artifactSaved) {
+      await logStage(reqId, jobId, 'screenshot', '📷 Сохранён screenshot ошибки');
+      if (err._artifactUrl) {
+        await logStage(reqId, jobId, 'screenshot', `🌐 URL: ${err._artifactUrl}`);
+      }
+      if (err._artifactTitle) {
+        await logStage(reqId, jobId, 'screenshot', `📄 Заголовок: ${err._artifactTitle}`);
+      }
+    }
 
     const newRetryCount = (job.retry_count || 0) + 1;
     const isPermanent   = newRetryCount > RETRY_DELAYS.length;

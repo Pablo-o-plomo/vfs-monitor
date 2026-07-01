@@ -115,13 +115,17 @@
 
     <!-- Блок ошибки -->
     <div id="live-error-block" style="display:none;margin-top:12px;padding:10px 12px;background:var(--bg2);border-radius:6px">
-      <div style="display:flex;align-items:center;gap:8px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <span style="color:var(--red);font-size:13px">Последняя проверка завершилась ошибкой</span>
         <form action="/requests/<%= vr.id %>/clear-error" method="POST" style="display:inline">
           <button type="submit" class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px">✕ Сбросить</button>
         </form>
         <button type="button" class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px"
           onclick="var d=document.getElementById('live-error-detail');d.style.display=d.style.display==='none'?'block':'none';this.textContent=this.textContent==='Подробнее'?'Скрыть':'Подробнее'">Подробнее</button>
+        <a href="/requests/<%= vr.id %>/artifacts/last-error.png" target="_blank"
+           class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px">📷 Скриншот</a>
+        <a href="/requests/<%= vr.id %>/artifacts/last-error.html" target="_blank"
+           class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px">🌐 HTML</a>
       </div>
       <div id="live-error-detail" style="display:none;margin-top:6px;font-size:11px;font-family:monospace;color:var(--red);word-break:break-all"></div>
     </div>
