@@ -90,173 +90,130 @@
   <% } %>
 </div>
 
-<!-- Настройки мониторинга -->
+<!-- Данные заявителя -->
 <div class="card" style="margin-bottom:20px">
   <div class="card-header">
-    ⚙ Настройки мониторинга
-    <button class="btn btn-ghost btn-sm" onclick="document.getElementById('settings-form').classList.toggle('hidden')" type="button">
+    👤 Данные заявителя
+    <button class="btn btn-ghost btn-sm" onclick="document.getElementById('applicant-form').classList.toggle('hidden')" type="button">
       ✏ Изменить
     </button>
   </div>
   <div style="padding:16px 20px">
-    <!-- Краткий просмотр -->
-    <div id="settings-view" class="settings-inline" style="font-size:13px">
-      <div>
-        <span class="meta">Интервал</span><br>
-        <b><%= vr.interval_minutes || 7 %> мин</b> ± <%= vr.jitter_minutes || 3 %> мин
-      </div>
-      <div>
-        <span class="meta">Лимит уведомлений/день</span><br>
-        <b><%= vr.notify_limit_per_day || 5 %></b>
-      </div>
-      <div>
-        <span class="meta">Приоритет</span><br>
-        <b><%= vr.priority || 0 %></b>
-      </div>
-      <div>
-        <span class="meta">Ночные проверки</span><br>
-        <b><%= vr.work_night ? '✓ Да (24/7)' : '✗ Нет (пауза 23–07 МСК)' %></b>
-      </div>
-      <% if (vr.notify_client_telegram) { %>
-      <div>
-        <span class="meta">Telegram клиента</span><br>
-        <b><%= vr.notify_client_telegram %></b>
-      </div>
+    <!-- Просмотр -->
+    <div id="applicant-view">
+      <% const hasApplicant = vr.first_name || vr.last_name || vr.birth_date || vr.passport_num; %>
+      <% if (!hasApplicant) { %>
+        <div class="meta" style="font-size:13px">Данные не заполнены. Нужны для автобронирования.</div>
+      <% } else { %>
+        <div class="info-grid" style="font-size:13px">
+          <% if (vr.first_name || vr.last_name) { %>
+          <div class="info-item">
+            <label>Имя / Фамилия</label>
+            <span><%= [vr.first_name, vr.last_name].filter(Boolean).join(' ') %></span>
+          </div>
+          <% } %>
+          <% if (vr.birth_date) { %>
+          <div class="info-item">
+            <label>Дата рождения</label>
+            <span><%= fmt.date(vr.birth_date) %></span>
+          </div>
+          <% } %>
+          <% if (vr.gender) { %>
+          <div class="info-item">
+            <label>Пол</label>
+            <span><%= vr.gender === 'M' ? 'Мужской' : vr.gender === 'F' ? 'Женский' : vr.gender %></span>
+          </div>
+          <% } %>
+          <% if (vr.citizenship) { %>
+          <div class="info-item">
+            <label>Гражданство</label>
+            <span><%= vr.citizenship %></span>
+          </div>
+          <% } %>
+          <% if (vr.passport_num) { %>
+          <div class="info-item">
+            <label>Номер паспорта</label>
+            <span><%= vr.passport_num %></span>
+          </div>
+          <% } %>
+          <% if (vr.passport_exp) { %>
+          <div class="info-item">
+            <label>Срок действия паспорта</label>
+            <span><%= fmt.date(vr.passport_exp) %></span>
+          </div>
+          <% } %>
+          <% if (vr.applicant_email) { %>
+          <div class="info-item">
+            <label>Email заявителя</label>
+            <span><%= vr.applicant_email %></span>
+          </div>
+          <% } %>
+          <% if (vr.applicant_phone) { %>
+          <div class="info-item">
+            <label>Телефон заявителя</label>
+            <span><%= vr.applicant_phone %></span>
+          </div>
+          <% } %>
+          <% if (vr.auto_book) { %>
+          <div class="info-item" style="grid-column:1/-1">
+            <span style="color:var(--green);font-weight:600">⚡ Автобронирование включено</span>
+          </div>
+          <% } %>
+          <% if (vr.comment) { %>
+          <div class="info-item" style="grid-column:1/-1">
+            <label>Комментарий</label>
+            <span><%= vr.comment %></span>
+          </div>
+          <% } %>
+        </div>
       <% } %>
     </div>
 
-    <!-- Форма редактирования (скрыта по умолчанию) -->
-    <form id="settings-form" action="/requests/<%= vr.id %>/settings" method="POST"
+    <!-- Форма редактирования -->
+    <form id="applicant-form" action="/requests/<%= vr.id %>/applicant" method="POST"
           class="hidden" style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
       <div class="settings-inline">
         <div class="form-group">
-          <label>Интервал (мин)</label>
-          <input type="number" name="interval_minutes" value="<%= vr.interval_minutes || 7 %>" min="3" max="60">
+          <label>Имя (First Name)</label>
+          <input type="text" name="first_name" value="<%= vr.first_name || '' %>" placeholder="IVAN">
         </div>
         <div class="form-group">
-          <label>Разброс (мин)</label>
-          <input type="number" name="jitter_minutes" value="<%= vr.jitter_minutes || 3 %>" min="0" max="15">
+          <label>Фамилия (Last Name)</label>
+          <input type="text" name="last_name" value="<%= vr.last_name || '' %>" placeholder="IVANOV">
         </div>
         <div class="form-group">
-          <label>Лимит уведомлений/день</label>
-          <input type="number" name="notify_limit_per_day" value="<%= vr.notify_limit_per_day || 5 %>" min="1" max="50">
+          <label>Дата рождения</label>
+          <input type="date" name="birth_date" value="<%= vr.birth_date ? vr.birth_date.toISOString ? vr.birth_date.toISOString().slice(0,10) : String(vr.birth_date).slice(0,10) : '' %>">
         </div>
         <div class="form-group">
-          <label>Приоритет</label>
-          <input type="number" name="priority" value="<%= vr.priority || 0 %>" min="0" max="10">
+          <label>Пол</label>
+          <select name="gender">
+            <option value="">— не указан —</option>
+            <option value="M" <%= vr.gender === 'M' ? 'selected' : '' %>>Мужской</option>
+            <option value="F" <%= vr.gender === 'F' ? 'selected' : '' %>>Женский</option>
+          </select>
         </div>
         <div class="form-group">
-          <label>Telegram клиента</label>
-          <input type="text" name="notify_client_telegram" value="<%= vr.notify_client_telegram || '' %>" placeholder="-100xxxxxxx">
+          <label>Гражданство</label>
+          <input type="text" name="citizenship" value="<%= vr.citizenship || '' %>" placeholder="RUS">
         </div>
         <div class="form-group">
-          <label for="work_night_cb">Ночные проверки</label>
-          <div>
-            <% var workNightChecked = vr.work_night ? 'checked' : ''; %>
-            <input type="checkbox" id="work_night_cb" name="work_night" value="on" <%- workNightChecked %>>
-            <label for="work_night_cb">Проверять ночью (23–07 МСК)</label>
-          </div>
+          <label>Номер паспорта</label>
+          <input type="text" name="passport_num" value="<%= vr.passport_num || '' %>" placeholder="700000000">
         </div>
-      </div>
-      <div class="form-actions" style="margin-top:14px">
-        <button type="submit" class="btn btn-primary btn-sm">💾 Сохранить</button>
-        <button type="button" class="btn btn-ghost btn-sm"
-          onclick="document.getElementById('settings-form').classList.add('hidden')">Отмена</button>
-      </div>
-    </form>
-  </div>
-</div>
-
-<!-- История проверок -->
-<div class="card" style="margin-bottom:20px">
-  <div class="card-header">
-    🕐 История проверок (<%= history.length %>)
-  </div>
-  <% if (history.length === 0) { %>
-    <div class="empty" style="padding:24px">
-      История появится после первой проверки worker'а.
-    </div>
-  <% } else { %>
-    <table>
-      <thead>
-        <tr><th>Время</th><th>Результат</th><th>Слотов</th><th>Уведомление</th></tr>
-      </thead>
-      <tbody>
-        <% history.forEach(h => { %>
-          <tr>
-            <td class="meta"><%= fmt.dt(h.checked_at) %></td>
-            <td>
-              <span class="result-<%= h.result %>">
-                <%= h.result === 'slot_found' ? '🟢 Найден слот'
-                  : h.result === 'no_slots'   ? '○ Нет слотов'
-                  : '🔴 Ошибка' %>
-              </span>
-              <% if (h.error_msg) { %>
-                <br><span class="meta" style="font-family:monospace;font-size:11px"><%= h.error_msg.slice(0,80) %></span>
-              <% } %>
-            </td>
-            <td><%= h.slots_count > 0 ? h.slots_count : '—' %></td>
-            <td><%= h.notified ? '✓' : '—' %></td>
-          </tr>
-        <% }) %>
-      </tbody>
-    </table>
-  <% } %>
-</div>
-
-<!-- Найденные слоты -->
-<div class="card" style="margin-bottom:20px">
-  <div class="card-header">
-    📅 Найденные слоты (<%= slots.length %>)
-  </div>
-  <% if (slots.length === 0) { %>
-    <div class="empty">
-      <div class="empty-icon">🔍</div>
-      Слоты ещё не найдены. Worker проверяет VFS каждые ~<%= vr.interval_minutes || 7 %> мин.
-    </div>
-  <% } else { %>
-    <table>
-      <thead>
-        <tr><th>Дата</th><th>Время</th><th>Центр</th><th>Найден в</th></tr>
-      </thead>
-      <tbody>
-        <% slots.forEach(s => { %>
-          <tr>
-            <td><b><%= s.slot_date %></b></td>
-            <td><%= s.slot_time || '—' %></td>
-            <td><%= s.center || vr.center %></td>
-            <td class="meta"><%= fmt.dt(s.found_at) %></td>
-          </tr>
-        <% }) %>
-      </tbody>
-    </table>
-  <% } %>
-</div>
-
-<!-- История уведомлений -->
-<div class="card">
-  <div class="card-header">🔔 Уведомления (<%= notifications.length %>)</div>
-  <% if (notifications.length === 0) { %>
-    <div class="empty" style="padding:24px">Уведомлений не было</div>
-  <% } else { %>
-    <table>
-      <thead><tr><th>Канал</th><th>Статус</th><th>Отправлено</th><th>Сообщение</th></tr></thead>
-      <tbody>
-        <% notifications.forEach(n => { %>
-          <tr>
-            <td><%= n.channel %></td>
-            <td><span class="badge badge-<%= n.status %>"><%= n.status %></span></td>
-            <td class="meta"><%= fmt.dt(n.sent_at) %></td>
-            <td class="meta" style="max-width:300px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-              <%= n.message ? n.message.slice(0,80) : '—' %>
-            </td>
-          </tr>
-        <% }) %>
-      </tbody>
-    </table>
-  <% } %>
-</div>
-
-<style>
-.hidden { display: none !important; }
-</style>
+        <div class="form-group">
+          <label>Срок действия паспорта</label>
+          <input type="date" name="passport_exp" value="<%= vr.passport_exp ? String(vr.passport_exp).slice(0,10) : '' %>">
+        </div>
+        <div class="form-group">
+          <label>Email заявителя</label>
+          <input type="email" name="applicant_email" value="<%= vr.applicant_email || '' %>">
+        </div>
+        <div class="form-group">
+          <label>Телефон заявителя</label>
+          <input type="text" name="applicant_phone" value="<%= vr.applicant_phone || '' %>" placeholder="+7...">
+        </div>
+        <div class="form-group" style="grid-column:1/-1">
+          <label>Комментарий</label>
+          <input type="text" name="comment" value="<%= vr.comment || '' %>">
+   

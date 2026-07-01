@@ -136,7 +136,17 @@ async function checkSlots(params) {
     // ── 5. Подкатегория ───────────────────────────────────────────────
     logger.info(`[vfs] Выбираем подкатегорию: ${subcategory}`);
     await selectDropdownByText(page, subcategory, 'Выберите подкатегорию');
-    await randomDelay(600, 1200);
+    await randomDelay(1500, 2500); // даём Angular обновить DOM
+
+    // ── 5а. Баннер «Ближайший доступный слот» ────────────────────────
+    // VFS показывает текст вида:
+    // "Ближайший доступный слот для 1 заявителя: 21.07.2026"
+    // Перехватываем его ДО нажатия «Продолжить»
+    const bannerSlots = await parseEarliestSlotBanner(page, dateFrom, dateTo);
+    if (bannerSlots.length > 0) {
+      logger.info('[vfs] Слот найден через баннер, возвращаем без перехода к календарю');
+      return bannerSlots;
+    }
 
     // ── 6. Ранняя проверка «нет слотов» ──────────────────────────────
     const noSlotsEl = await page.$('text=нет доступных слотов');
@@ -331,8 +341,7 @@ async function parseDomCalendar(page) {
 
 function parseRuDate(str) {
   const months = {
-    января: '01', февраля: '02', марта: '03', апреля: '04',
-    мая: '05', июня: '06', июля: '07', августа: '08',
+    января: '01', февраля: '02', марта: '03',     апреля: '04', мая: '05', июня: '06', июля: '07', августа: '08',
     сентября: '09', октября: '10', ноября: '11', декабря: '12',
   };
   const m = str.match(/(\d{1,2})\s+(\S+)\s+(\d{4})/);
@@ -351,6 +360,75 @@ function filterByDateRange(slots, dateFrom, dateTo) {
     const d = new Date(s.date);
     return d >= from && d <= to;
   });
+}
+
+// ─────────────────────────────────────────────
+// БАННЕР «БЛИЖАЙШИЙ ДОСТУПНЫЙ СЛОТ»
+// ─────────────────────────────────────────────
+// VFS показывает текст вида:
+//   "Ближайший доступный слот для 1 заявителя: 21.07.2026"
+// Ищем ПОСЛЕ выбора подкатегории, ДО нажатия «Продолжить»
+
+async function parseEarliestSlotBanner(page, dateFrom, dateTo) {
+  try {
+    const bodyText = await page.evaluate(
+      () => document.body.innerText || document.body.textContent || ''
+    );
+
+    logger.info('[worker] Сканируем страницу на наличие баннера слота...');
+
+    const patterns = [
+      /[Бб]лижайший\s+доступный\s+слот[^:]*:\s*(\d{2}\.\d{2}\.\d{4})/i,
+      /[Nn]earest\s+available\s+slot[^:]*:\s*(\d{2}\.\d{2}\.\d{4})/i,
+      /[Nn]ext\s+available\s+appointment[^:]*:\s*(\d{2}\.\d{2}\.\d{4})/i,
+      /slot[^:]*available[^:]*:\s*(\d{2}\.\d{2}\.\d{4})/i,
+    ];
+
+    let rawDate = null;
+    let matchedText = null;
+
+    for (const pattern of patterns) {
+      const m = bodyText.match(pattern);
+      if (m) {
+        rawDate = m[1];
+        const idx = bodyText.indexOf(m[0]);
+        matchedText = bodyText.slice(Math.max(0, idx - 10), idx + m[0].length + 10).trim();
+        break;
+      }
+    }
+
+    if (!rawDate) {
+      logger.info('[worker] Баннер ближайшего слота не найден на странице');
+      return [];
+    }
+
+    logger.info(`[worker] Найден текст слота: "${matchedText}"`);
+
+    // DD.MM.YYYY → YYYY-MM-DD
+    const [dd, mm, yyyy] = rawDate.split('.');
+    if (!dd || !mm || !yyyy) {
+      logger.warn(`[worker] Не удалось разобрать дату слота: ${rawDate}`);
+      return [];
+    }
+    const isoDate = `${yyyy}-${mm}-${dd}`;
+    logger.info(`[worker] Извлечена дата слота: ${isoDate}`);
+
+    const slotDate = new Date(isoDate);
+    const from = new Date(dateFrom);
+    const to = new Date(dateTo);
+    const inRange = slotDate >= from && slotDate <= to;
+
+    logger.info(`[worker] Дата входит в диапазон [${dateFrom} — ${dateTo}]: ${inRange ? 'YES' : 'NO'}`);
+
+    if (!inRange) return [];
+
+    logger.info(`[worker] Слот сохранён: ${isoDate}`);
+    return [{ date: isoDate, time: '', center: '' }];
+
+  } catch (err) {
+    logger.warn(`[worker] Ошибка при поиске баннера слота: ${err.message}`);
+    return [];
+  }
 }
 
 module.exports = { checkSlots };
