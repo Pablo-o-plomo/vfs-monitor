@@ -100,6 +100,59 @@
           </div>
         </div>
 
+        <!-- Данные заявителя -->
+        <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--border)">
+          <div style="font-size:12px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:14px">
+            👤 Данные заявителя
+          </div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Имя (First Name) *</label>
+              <input type="text" name="first_name" value="<%= values.first_name || '' %>" placeholder="IVAN" required>
+            </div>
+            <div class="form-group">
+              <label>Фамилия (Last Name) *</label>
+              <input type="text" name="last_name" value="<%= values.last_name || '' %>" placeholder="IVANOV" required>
+            </div>
+            <div class="form-group">
+              <label>Дата рождения *</label>
+              <input type="date" name="birth_date" value="<%= values.birth_date || '' %>" required>
+            </div>
+            <div class="form-group">
+              <label>Пол *</label>
+              <select name="gender" required>
+                <option value="">— выберите —</option>
+                <option value="M" <%= values.gender === 'M' ? 'selected' : '' %>>Мужской</option>
+                <option value="F" <%= values.gender === 'F' ? 'selected' : '' %>>Женский</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Гражданство</label>
+              <input type="text" name="citizenship" value="<%= values.citizenship || 'RUS' %>" placeholder="RUS">
+            </div>
+            <div class="form-group">
+              <label>Номер паспорта</label>
+              <input type="text" name="passport_num" value="<%= values.passport_num || '' %>" placeholder="700000000">
+            </div>
+            <div class="form-group">
+              <label>Срок действия паспорта</label>
+              <input type="date" name="passport_exp" value="<%= values.passport_exp || '' %>">
+            </div>
+            <div class="form-group">
+              <label>Email заявителя</label>
+              <input type="email" name="applicant_email" value="<%= values.applicant_email || '' %>">
+            </div>
+            <div class="form-group">
+              <label>Телефон заявителя</label>
+              <input type="text" name="applicant_phone" value="<%= values.applicant_phone || '' %>" placeholder="+7...">
+            </div>
+            <div class="form-group form-full">
+              <label>Комментарий</label>
+              <input type="text" name="comment" value="<%= values.comment || '' %>">
+            </div>
+          </div>
+        </div>
+
         <!-- Настройки мониторинга -->
         <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--border)">
           <div style="font-size:12px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:14px">
