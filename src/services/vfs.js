@@ -28,42 +28,60 @@ const path = require('path');
 // ЛОГИН
 // ─────────────────────────────────────────────
 
-// ─────────────────────────────────────────────
-// CLOUDFLARE TURNSTILE — пытаемся решить автоматически
-// ─────────────────────────────────────────────
-
-async function handleCloudflare(page) {
+// Симулируем движение мыши — Cloudflare Turnstile поведенческий:
+// он снимает галочку "Verify you are human" сам, когда видит нормальное движение мыши.
+// page.fill() не генерирует mouse events, поэтому нужны явные mouse.move().
+async function simulateMouseNearWidget(page) {
   try {
-    await sleep(1500); // дать время iframe CF загрузиться
+    const vp = page.viewportSize() || { width: 1366, height: 768 };
+    const W = vp.width;
+    const H = vp.height;
+    logger.info('[vfs] Симулируем движение мыши (Cloudflare поведенческая проверка)...');
 
-    // Ищем iframe Cloudflare
-    let cfFrame = null;
-    for (const frame of page.frames()) {
-      const u = frame.url();
-      if (u.includes('cloudflare.com') || u.includes('challenges.cf') || u.includes('turnstile')) {
-        cfFrame = frame;
-        break;
-      }
+    // Двигаем мышь по странице — форма + зона CF виджета (низ формы ~60-70% высоты)
+    const moves = [
+      { x: W * 0.40, y: H * 0.30 },
+      { x: W * 0.50, y: H * 0.40 },
+      { x: W * 0.42, y: H * 0.48 },
+      { x: W * 0.38, y: H * 0.55 },  // зона CF виджета
+      { x: W * 0.48, y: H * 0.58 },
+      { x: W * 0.44, y: H * 0.62 },
+      { x: W * 0.52, y: H * 0.56 },
+      { x: W * 0.46, y: H * 0.50 },
+    ];
+
+    for (const pt of moves) {
+      await page.mouse.move(
+        Math.round(pt.x + (Math.random() - 0.5) * 40),
+        Math.round(pt.y + (Math.random() - 0.5) * 25),
+        { steps: 8 + Math.floor(Math.random() * 10) },
+      );
+      await sleep(120 + Math.random() * 250);
     }
-    if (!cfFrame) return false; // CF не обнаружен
+  } catch (e) {
+    logger.warn('[vfs] simulateMouseNearWidget error: ' + e.message);
+  }
+}
 
-    logger.info('[vfs] Cloudflare Turnstile обнаружен, пробуем решить...');
+// Ждём пока кнопка "Войти" станет активной (CF Turnstile снял блокировку)
+async function waitForSubmitEnabled(page, timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const enabled = await page.evaluate(() => {
+      const btn = document.querySelector('button[type="submit"]');
+      if (!btn) return false;
+      return !btn.disabled && !btn.hasAttribute('disabled') &&
+             !btn.classList.contains('mat-button-disabled');
+    }).catch(() => false);
 
-    // Кликаем по чекбоксу внутри CF-iframe
-    const cb = cfFrame.locator('input[type="checkbox"]');
-    if (await cb.isVisible({ timeout: 4000 }).catch(() => false)) {
-      await cb.click({ force: true });
-      logger.info('[vfs] CF checkbox нажат, ждём проверки (6с)...');
-      await sleep(6000);
+    if (enabled) {
+      logger.info('[vfs] Кнопка "Войти" активна — Turnstile решён');
       return true;
     }
-
-    logger.warn('[vfs] CF checkbox не найден внутри iframe');
-    return false;
-  } catch (e) {
-    logger.warn('[vfs] CF handling error: ' + e.message);
-    return false;
+    await sleep(600);
   }
+  logger.warn('[vfs] Turnstile не решён за ' + (timeoutMs / 1000) + 'с, продолжаем...');
+  return false;
 }
 
 async function login(page, baseUrl) {
@@ -78,9 +96,6 @@ async function login(page, baseUrl) {
     return;
   }
 
-  // Cloudflare Turnstile (если есть) — пробуем решить до заполнения формы
-  await handleCloudflare(page);
-
   // Ждём email-поле в DOM (state:'attached' — не требует видимости в понимании Playwright,
   // нужно т.к. Angular + CF Turnstile могут держать форму с opacity:0/pointer-events:none)
   const EMAIL_SEL = [
@@ -93,23 +108,34 @@ async function login(page, baseUrl) {
   ].join(', ');
 
   await page.waitForSelector(EMAIL_SEL, { state: 'attached', timeout: 30_000 });
+
+  // Небольшое движение мыши пока форма грузится — CF начинает анализ сразу
+  await simulateMouseNearWidget(page);
+
   const emailInput = page.locator(EMAIL_SEL).first();
   await randomDelay(400, 800);
   await emailInput.click({ force: true });
   await randomDelay(300, 600);
   await emailInput.fill(config.vfs.email, { force: true });
-  await randomDelay(400, 900);
+  await randomDelay(500, 1000);
 
   const passwordInput = page.locator('input[type="password"]').first();
   await passwordInput.click({ force: true });
   await randomDelay(300, 700);
   await passwordInput.fill(config.vfs.password, { force: true });
-  await randomDelay(600, 1200);
+  await randomDelay(600, 1000);
+
+  // Ещё одна серия движений мыши — CF должен увидеть поведение и активировать кнопку
+  await simulateMouseNearWidget(page);
+
+  // Ждём пока CF Turnstile активирует кнопку «Войти» (до 15 сек)
+  await waitForSubmitEnabled(page, 15000);
+  await randomDelay(500, 1000);
 
   const submitBtn = page.locator(
     'button[type="submit"], button:has-text("Войти"), button:has-text("Sign In")'
   ).first();
-  await submitBtn.click();
+  await submitBtn.click({ force: true });
 
   await page.waitForURL('**/dashboard**', { timeout: 30_000 }).catch(() => {});
   await randomDelay(1000, 2000);
