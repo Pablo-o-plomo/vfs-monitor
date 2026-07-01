@@ -104,6 +104,14 @@ async function setStage(reqId, jobId, stage, message = null) {
   ).catch(() => {});
 }
 
+// Только запись в ленту — не меняет job_stage в monitoring_jobs
+async function logStage(reqId, jobId, stage, message) {
+  await query(
+    'INSERT INTO stage_log(request_id, job_id, stage, message) VALUES($1,$2,$3,$4)',
+    [reqId, jobId, stage, message || null]
+  ).catch(() => {});
+}
+
 async function writeCrash(reason) {
   await query(
     'UPDATE worker_status SET last_crash_at=NOW(), last_crash_reason=$1 WHERE id=1',
@@ -169,6 +177,8 @@ async function processRequest(vr, job) {
 
   await setCurrentJob(reqId, `${vr.country_name} / ${vr.center} — ${vr.client_name}`);
 
+  const startedAt = Date.now();
+
   // Помечаем job как running + state=running
   await query(
     "UPDATE monitoring_jobs SET status='running', state='running', job_stage='waiting', stage_updated_at=NOW() WHERE id=$1",
@@ -217,6 +227,17 @@ async function processRequest(vr, job) {
 
     logger.info(`[worker] Заявка #${reqId}: найдено ${slots.length} слотов`);
 
+    // Итоговые записи в лог активности
+    const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+    if (!booking) {
+      if (slots.length === 0) {
+        await logStage(reqId, jobId, 'checking_slots', 'Слотов не найдено');
+      } else {
+        await logStage(reqId, jobId, 'slot_found', `Найдено слотов: ${slots.length}`);
+      }
+      await logStage(reqId, jobId, 'done', `Проверка завершена за ${elapsedSec} сек`);
+    }
+
     // ─── Автобронирование ─────────────────────────────────────────────
     if (booking) {
       const client  = { name: vr.client_name, phone: vr.client_phone };
@@ -224,6 +245,11 @@ async function processRequest(vr, job) {
 
       if (booking.success) {
         logger.info(`[worker] Заявка #${reqId}: ЗАБРОНИРОВАНО ${booking.date} ${booking.time || ''} ref=${booking.ref || 'нет'}`);
+
+        const bookElapsed = Math.round((Date.now() - startedAt) / 1000);
+        await logStage(reqId, jobId, 'booked',
+          `Запись оформлена: ${booking.date}${booking.time ? ' ' + booking.time : ''}` +
+          `${booking.ref ? ' · ref: ' + booking.ref : ''} · ${bookElapsed} сек`);
 
         await query(
           "UPDATE monitoring_jobs SET state='booked' WHERE id=$1",
@@ -272,6 +298,9 @@ async function processRequest(vr, job) {
       } else {
         // Бронирование не удалось — уведомляем и продолжаем мониторинг
         logger.warn(`[worker] Заявка #${reqId}: автобронирование не удалось: ${booking.error}`);
+
+        await logStage(reqId, jobId, 'booking_failed',
+          `Ошибка бронирования: ${String(booking.error).slice(0, 150)}`);
 
         await query(
           "UPDATE monitoring_jobs SET state='booking_failed' WHERE id=$1",
@@ -385,6 +414,10 @@ async function processRequest(vr, job) {
 
   } catch (err) {
     logger.error(`[worker] Ошибка заявки #${reqId}: ${err.message}`);
+
+    const errElapsed = Math.round((Date.now() - startedAt) / 1000);
+    await logStage(reqId, jobId, 'error',
+      `Ошибка проверки: ${String(err.message).slice(0, 200)} · ${errElapsed} сек`);
 
     const newRetryCount = (job.retry_count || 0) + 1;
     const isPermanent   = newRetryCount > RETRY_DELAYS.length;
@@ -524,7 +557,7 @@ async function main() {
 
 // ─────────────────────────────────────────────
 // CRASH HANDLER
-// ─────────────────────────────────────────────
+// ─────────────────────────────────────────────────────
 
 process.on('uncaughtException', async (err) => {
   logger.error('[worker] UNCAUGHT EXCEPTION: ' + err.message + '\n' + (err.stack || ''));

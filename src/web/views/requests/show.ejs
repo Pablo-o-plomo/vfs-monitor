@@ -359,7 +359,7 @@
     <span>📋 Лог текущей проверки</span>
     <span id="log-updated" class="meta" style="font-size:11px"></span>
   </div>
-  <div id="activity-log" style="padding:14px 20px;min-height:48px">
+  <div id="activity-log" style="padding:14px 20px;min-height:48px;max-height:320px;overflow-y:auto">
     <div class="meta" style="font-size:13px">Ожидаем данные...</div>
   </div>
 </div>
@@ -613,6 +613,8 @@
     });
     html += '</div>';
     el.innerHTML = html;
+    // Автоскролл к последней записи
+    el.scrollTop = el.scrollHeight;
     setTxt('log-updated', 'обновлено ' + new Date().toLocaleTimeString('ru-RU'));
   }
 
