@@ -538,3 +538,12 @@ process.on('unhandledRejection', (reason) => {
   logger.error('[worker] Unhandled Rejection: ' + (reason?.message || String(reason)));
 });
 
+
+main().catch(async (err) => {
+  logger.error('[worker] FATAL: ' + err.message + "
+" + (err.stack || ''));
+  await writeCrash(err.message || String(err));
+  await notifyError('Worker fatal: ' + err.message).catch(() => {});
+  await closeBrowser().catch(() => {});
+  process.exit(1);
+});
