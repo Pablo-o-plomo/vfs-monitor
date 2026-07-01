@@ -30,16 +30,20 @@ const path = require('path');
 
 async function login(page, baseUrl) {
   logger.info('[vfs] Переходим на страницу входа...');
-  await page.goto(`${baseUrl}/login`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  await randomDelay(1500, 3000);
+  // networkidle ждёт когда Angular закончит рендер формы
+  await page.goto(`${baseUrl}/login`, { waitUntil: 'networkidle', timeout: 60_000 })
+    .catch(() => {}); // networkidle может не дождаться — продолжаем
+  await randomDelay(2000, 3500);
 
   if (page.url().includes('/dashboard')) {
     logger.info('[vfs] Уже авторизованы (сессия активна)');
     return;
   }
 
+  // Ждём появления email-поля — Angular SPA может рендерить несколько секунд
   const emailInput = page.locator('input[type="email"], input[name="email"], #mat-input-0');
-  await emailInput.waitFor({ timeout: 15_000 });
+  await emailInput.waitFor({ timeout: 30_000 });
+  await randomDelay(300, 700);
   await emailInput.click();
   await randomDelay(300, 700);
   await emailInput.fill(config.vfs.email);
