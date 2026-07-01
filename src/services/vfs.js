@@ -28,6 +28,44 @@ const path = require('path');
 // ЛОГИН
 // ─────────────────────────────────────────────
 
+// ─────────────────────────────────────────────
+// CLOUDFLARE TURNSTILE — пытаемся решить автоматически
+// ─────────────────────────────────────────────
+
+async function handleCloudflare(page) {
+  try {
+    await sleep(1500); // дать время iframe CF загрузиться
+
+    // Ищем iframe Cloudflare
+    let cfFrame = null;
+    for (const frame of page.frames()) {
+      const u = frame.url();
+      if (u.includes('cloudflare.com') || u.includes('challenges.cf') || u.includes('turnstile')) {
+        cfFrame = frame;
+        break;
+      }
+    }
+    if (!cfFrame) return false; // CF не обнаружен
+
+    logger.info('[vfs] Cloudflare Turnstile обнаружен, пробуем решить...');
+
+    // Кликаем по чекбоксу внутри CF-iframe
+    const cb = cfFrame.locator('input[type="checkbox"]');
+    if (await cb.isVisible({ timeout: 4000 }).catch(() => false)) {
+      await cb.click({ force: true });
+      logger.info('[vfs] CF checkbox нажат, ждём проверки (6с)...');
+      await sleep(6000);
+      return true;
+    }
+
+    logger.warn('[vfs] CF checkbox не найден внутри iframe');
+    return false;
+  } catch (e) {
+    logger.warn('[vfs] CF handling error: ' + e.message);
+    return false;
+  }
+}
+
 async function login(page, baseUrl) {
   logger.info('[vfs] Переходим на страницу входа...');
   // networkidle ждёт когда Angular закончит рендер формы
@@ -40,12 +78,17 @@ async function login(page, baseUrl) {
     return;
   }
 
-  // Ждём появления email-поля — Angular SPA может рендерить несколько секунд
-  const emailInput = page.locator('input[type="email"], input[name="email"], #mat-input-0');
+  // Cloudflare Turnstile (если есть) — пробуем решить до заполнения формы
+  await handleCloudflare(page);
+
+  // Ждём email-поле; расширенный набор селекторов для VFS Angular
+  const emailInput = page.locator(
+    'input[type="email"], input[name="email"], input[formcontrolname="email"], input[formcontrolname="userName"], #mat-input-0'
+  ).first();
   await emailInput.waitFor({ timeout: 30_000 });
-  await randomDelay(300, 700);
+  await randomDelay(400, 800);
   await emailInput.click();
-  await randomDelay(300, 700);
+  await randomDelay(300, 600);
   await emailInput.fill(config.vfs.email);
   await randomDelay(400, 900);
 
