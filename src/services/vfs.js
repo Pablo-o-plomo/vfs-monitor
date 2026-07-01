@@ -158,7 +158,11 @@ async function checkSlots(params, onStage = null) {
     // ── 2. Страница записи ────────────────────────────────────────────
     await randomDelay(1000, 2000);
     await page.goto(`${baseUrl}/book-appointment`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    await randomDelay(1500, 3000);
+    // Ждём пока Angular отрисует компоненты (network quiets + mat-select в DOM)
+    await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+    await page.waitForSelector('mat-select, select', { timeout: 15_000 })
+      .catch(() => logger.warn('[vfs] mat-select не появился — форма может не загрузиться'));
+    await randomDelay(1000, 2000);
 
     // ── 3. Выбор страны и центра ─────────────────────────────────────
     logger.info(`[vfs] Выбираем центр: ${center}`);
@@ -268,7 +272,7 @@ async function selectDropdownByText(page, value, placeholderHint) {
   let dropdown = null;
   for (const sel of selectors) {
     const el = page.locator(sel).first();
-    if (await el.isVisible({ timeout: 2000 }).catch(() => false)) {
+    if (await el.isVisible({ timeout: 5000 }).catch(() => false)) {
       dropdown = el;
       break;
     }
@@ -279,6 +283,7 @@ async function selectDropdownByText(page, value, placeholderHint) {
     return;
   }
 
+  logger.info(`[vfs] Клик по дропдауну для "${value}"`);
   await dropdown.click();
   await randomDelay(500, 1000);
 
