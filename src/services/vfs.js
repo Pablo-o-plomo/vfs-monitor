@@ -160,11 +160,11 @@ async function checkSlots(params, onStage = null) {
 
     // ── 3. Выбор страны и центра ─────────────────────────────────────
     logger.info(`[vfs] Выбираем центр: ${center}`);
-    if (onStage) await onStage('selecting_country', `Выбираем ${countryName || countryCode.toUpperCase()}`);
+    if (onStage) await onStage('selecting_country', `Выбрана страна: ${countryName || countryCode.toUpperCase()}`);
     await selectDropdownByText(page, center, 'Выберите свой Центр приложений');
     await randomDelay(800, 1500);
 
-    if (onStage) await onStage('selecting_center', `Выбираем ${center}`);
+    if (onStage) await onStage('selecting_center', `Выбран центр: ${center}`);
 
     // ── 4. Категория ──────────────────────────────────────────────────
     logger.info(`[vfs] Выбираем категорию: ${category}`);
@@ -173,7 +173,7 @@ async function checkSlots(params, onStage = null) {
 
     // ── 5. Подкатегория ───────────────────────────────────────────────
     logger.info(`[vfs] Выбираем подкатегорию: ${subcategory}`);
-    if (onStage) await onStage('checking_slots', `Проверяем «${subcategory}»`);
+    if (onStage) await onStage('selecting_category', `Выбрана категория: ${subcategory}`);
     await selectDropdownByText(page, subcategory, 'Выберите подкатегорию');
     await randomDelay(1500, 2500); // даём Angular обновить DOM
 
@@ -200,7 +200,8 @@ async function checkSlots(params, onStage = null) {
     const noSlotsEl = await page.$('text=нет доступных слотов');
     if (noSlotsEl) {
       logger.info('[vfs] Слотов нет (сообщение на шаге выбора)');
-      return { slots: [], booking: null };
+      const earlyUrl = page.url(); const earlyTitle = await page.title().catch(() => '');
+      return { slots: [], booking: null, pageUrl: earlyUrl, pageTitle: earlyTitle };
     }
 
     // ── 7. Продолжить ─────────────────────────────────────────────────
@@ -217,20 +218,25 @@ async function checkSlots(params, onStage = null) {
 
     // ── 9. Ждём календарь ────────────────────────────────────────────
     logger.info('[vfs] Ждём календарь...');
+    if (onStage) await onStage('calendar_waiting', 'Ожидаем загрузку календаря');
     await page
       .waitForSelector('.mat-calendar, .calendar, [class*="calendar"]', { timeout: 20_000 })
       .catch(() => logger.warn('[vfs] Календарь не найден за 20 сек'));
+    if (onStage) await onStage('calendar_open', 'Календарь открыт');
 
     await sleep(3000); // время для API-ответов
 
     // ── 10. Парсинг DOM если API не поймали ──────────────────────────
+    if (onStage) await onStage('searching_dates', 'Ищем доступные даты');
     if (!apiCaptured) {
       logger.info('[vfs] API не перехвачен, парсим DOM...');
       const domSlots = await parseDomCalendar(page);
-      return { slots: filterByDateRange(domSlots, dateFrom, dateTo), booking: null };
+      const pgUrl1 = page.url(); const pgTitle1 = await page.title().catch(() => '');
+      return { slots: filterByDateRange(domSlots, dateFrom, dateTo), booking: null, pageUrl: pgUrl1, pageTitle: pgTitle1 };
     }
 
-    return { slots: filterByDateRange(capturedSlots, dateFrom, dateTo), booking: null };
+    const pgUrl = page.url(); const pgTitle = await page.title().catch(() => '');
+    return { slots: filterByDateRange(capturedSlots, dateFrom, dateTo), booking: null, pageUrl: pgUrl, pageTitle: pgTitle };
 
   } catch (err) {
     // Сохраняем скриншот и HTML при любой ошибке проверки

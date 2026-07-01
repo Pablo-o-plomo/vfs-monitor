@@ -232,9 +232,16 @@ async function processRequest(vr, job) {
     const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
     if (!booking) {
       if (slots.length === 0) {
-        await logStage(reqId, jobId, 'checking_slots', 'Слотов не найдено');
+        await logStage(reqId, jobId, 'no_slots', 'Доступных дат нет');
       } else {
         await logStage(reqId, jobId, 'slot_found', `Найдено слотов: ${slots.length}`);
+      }
+      // URL и заголовок страницы (из результата vfs.js)
+      if (result.pageUrl) {
+        await logStage(reqId, jobId, 'url_info', `URL: ${result.pageUrl}`);
+      }
+      if (result.pageTitle) {
+        await logStage(reqId, jobId, 'page_info', `Заголовок: ${result.pageTitle}`);
       }
       await logStage(reqId, jobId, 'done', `Проверка завершена за ${elapsedSec} сек`);
     }
@@ -422,12 +429,12 @@ async function processRequest(vr, job) {
 
     // Артефакты диагностики (скриншот + HTML), если vfs.js их сохранил
     if (err._artifactSaved) {
-      await logStage(reqId, jobId, 'screenshot', '📷 Сохранён screenshot ошибки');
+      await logStage(reqId, jobId, 'screenshot', 'Сохранён screenshot ошибки');
       if (err._artifactUrl) {
-        await logStage(reqId, jobId, 'screenshot', `🌐 URL: ${err._artifactUrl}`);
+        await logStage(reqId, jobId, 'url_info', `URL: ${err._artifactUrl}`);
       }
       if (err._artifactTitle) {
-        await logStage(reqId, jobId, 'screenshot', `📄 Заголовок: ${err._artifactTitle}`);
+        await logStage(reqId, jobId, 'page_info', `Заголовок: ${err._artifactTitle}`);
       }
     }
 
