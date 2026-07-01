@@ -235,4 +235,28 @@
 
 <!-- История уведомлений -->
 <div class="card">
-  <div class="card-header">🔔 
+  <div class="card-header">🔔 Уведомления (<%= notifications.length %>)</div>
+  <% if (notifications.length === 0) { %>
+    <div class="empty" style="padding:24px">Уведомлений не было</div>
+  <% } else { %>
+    <table>
+      <thead><tr><th>Канал</th><th>Статус</th><th>Отправлено</th><th>Сообщение</th></tr></thead>
+      <tbody>
+        <% notifications.forEach(n => { %>
+          <tr>
+            <td><%= n.channel %></td>
+            <td><span class="badge badge-<%= n.status %>"><%= n.status %></span></td>
+            <td class="meta"><%= fmt.dt(n.sent_at) %></td>
+            <td class="meta" style="max-width:300px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+              <%= n.message ? n.message.slice(0,80) : '—' %>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>
+
+<style>
+.hidden { display: none !important; }
+</style>

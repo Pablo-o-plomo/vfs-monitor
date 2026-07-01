@@ -257,4 +257,54 @@
     }
 
     setDot('dot-scheduler', h.scheduler);
-    setLabel('svc-scheduler-labe
+    setLabel('svc-scheduler-label',
+      h.scheduler === 'ok' ? '• работает' : '• недоступен');
+
+    setDot('dot-browser', h.browser);
+    if (data.browser && data.browser.running) {
+      setLabel('svc-browser-label',
+        '• pid ' + (data.browser.pid || '?') +
+        ' · стр: ' + (data.browser.pages || 0) +
+        ' · проверок: ' + (data.browser.checks || 0));
+    } else if (h.browser === 'idle') {
+      setLabel('svc-browser-label', '• не активен (worker жив)');
+    } else {
+      setLabel('svc-browser-label', '• нет данных');
+    }
+
+    // ── Счётчики ──
+    if (data.counts) {
+      var setEl = function(id, v) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = (v == null ? '—' : v);
+      };
+      setEl('cnt-active', data.counts.active);
+      setEl('cnt-paused', data.counts.paused);
+      var errEl = document.getElementById('cnt-error');
+      if (errEl) {
+        errEl.textContent  = data.counts.error == null ? '—' : data.counts.error;
+        errEl.style.color  = parseInt(data.counts.error) > 0 ? 'var(--red)' : 'var(--text2)';
+      }
+    }
+
+    // ── Текущая задача ──
+    var curJob   = document.getElementById('live-current-job');
+    var curDesc  = document.getElementById('live-current-desc');
+    var curBadge = document.getElementById('live-current-badge');
+    if (data.worker && data.worker.current_job) {
+      curJob.style.display   = 'block';
+      curBadge.style.display = 'inline-block';
+      curDesc.textContent    = data.worker.current_job.desc;
+    } else {
+      curJob.style.display   = 'none';
+      curBadge.style.display = 'none';
+    }
+
+    document.getElementById('live-queue-body').innerHTML = renderQueue(data.queue);
+    document.getElementById('live-log-body').innerHTML   = renderLog(data.history);
+  }
+
+  refresh();
+  setInterval(refresh, 10000);
+})();
+</script>

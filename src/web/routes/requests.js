@@ -216,4 +216,18 @@ router.post('/requests/:id/clear-error', async (req, res, next) => {
              state        = 'waiting',
              status       = 'idle',
              next_check_at = NOW()
-       WHERE
+       WHERE request_id = $1
+    `, [req.params.id]);
+    res.redirect(`/requests/${req.params.id}`);
+  } catch (e) { next(e); }
+});
+
+router.post('/requests/:id/delete', async (req, res, next) => {
+  try {
+    const { rows: [vr] } = await query('SELECT client_id FROM visa_requests WHERE id=$1', [req.params.id]);
+    await query('DELETE FROM visa_requests WHERE id=$1', [req.params.id]);
+    res.redirect(vr ? `/clients/${vr.client_id}` : '/clients');
+  } catch (e) { next(e); }
+});
+
+module.exports = router;

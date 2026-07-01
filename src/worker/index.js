@@ -422,3 +422,9 @@ main().catch(async (e) => {
 });
 
 module.exports = { main };
+sage);
+  await notifyError('Worker fatal: ' + e.message).catch(() => {});
+  process.exit(1);
+});
+
+module.exports = { main };
