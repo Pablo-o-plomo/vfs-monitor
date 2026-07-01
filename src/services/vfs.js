@@ -113,6 +113,7 @@ async function checkSlots(params, onStage = null) {
     await randomDelay(1500, 2500);
 
     if (!page.url().includes('/dashboard')) {
+      if (onStage) await onStage('login');
       await login(page, baseUrl);
     } else {
       logger.info('[vfs] Сессия активна, пропускаем логин');
@@ -127,6 +128,7 @@ async function checkSlots(params, onStage = null) {
 
     // ── 3. Выбор визового центра ──────────────────────────────────────
     logger.info(`[vfs] Выбираем центр: ${center}`);
+    if (onStage) await onStage('selecting_center');
     await selectDropdownByText(page, center, 'Выберите свой Центр приложений');
     await randomDelay(800, 1500);
 
@@ -559,7 +561,7 @@ async function attemptBooking(page, params, slotDate, onStage = null) {
     await randomDelay(1000, 2000);
 
     // ── 6. Подтверждаем запись ──────────────────────────────────────
-    if (onStage) await onStage('booking');
+    if (onStage) await onStage('confirming');
     log('Шаг 6: подтверждаем запись');
     const confirmSelectors = [
       'button:has-text("Подтвердить")',
