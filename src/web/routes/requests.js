@@ -46,6 +46,8 @@ router.post('/clients/:clientId/requests', async (req, res, next) => {
     date_from, date_to, notes,
     interval_minutes, jitter_minutes, notify_limit_per_day,
     notify_client_telegram, work_night, priority,
+    first_name, last_name, birth_date, gender, citizenship,
+    passport_num, passport_exp, applicant_email, applicant_phone, comment,
   } = req.body;
   const clientId = req.params.clientId;
 
@@ -55,6 +57,10 @@ router.post('/clients/:clientId/requests', async (req, res, next) => {
   if (!subcategory) missing.push('Подкатегория');
   if (!date_from)   missing.push('Дата от');
   if (!date_to)     missing.push('Дата до');
+  if (!first_name)  missing.push('Имя заявителя');
+  if (!last_name)   missing.push('Фамилия заявителя');
+  if (!birth_date)  missing.push('Дата рождения');
+  if (!gender)      missing.push('Пол');
 
   if (missing.length) {
     const { rows: [client] } = await query('SELECT * FROM clients WHERE id = $1', [clientId]);
@@ -74,8 +80,11 @@ router.post('/clients/:clientId/requests', async (req, res, next) => {
         (client_id, country_code, country_name, center, category, subcategory,
          date_from, date_to, notes,
          interval_minutes, jitter_minutes, notify_limit_per_day,
-         notify_client_telegram, work_night, priority)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         notify_client_telegram, work_night, priority,
+         first_name, last_name, birth_date, gender, citizenship,
+         passport_num, passport_exp, applicant_email, applicant_phone, comment)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+              $16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
       RETURNING id
     `, [
       clientId,
@@ -93,6 +102,16 @@ router.post('/clients/:clientId/requests', async (req, res, next) => {
       notify_client_telegram || null,
       work_night === 'on' || work_night === 'true' || false,
       parseInt(priority) || 0,
+      first_name,
+      last_name,
+      birth_date,
+      gender,
+      citizenship || null,
+      passport_num || null,
+      passport_exp || null,
+      applicant_email || null,
+      applicant_phone || null,
+      comment || null,
     ]);
 
     // Создаём monitoring_job

@@ -166,12 +166,20 @@ async function processRequest(vr, job) {
 
   try {
     const slots = await checkSlots({
-      countryCode: vr.country_code,
-      center:      vr.center,
-      category:    vr.category,
-      subcategory: vr.subcategory,
-      dateFrom:    vr.date_from,
-      dateTo:      vr.date_to,
+      countryCode:    vr.country_code,
+      center:         vr.center,
+      category:       vr.category,
+      subcategory:    vr.subcategory,
+      dateFrom:       vr.date_from,
+      dateTo:         vr.date_to,
+      firstName:      vr.first_name      || null,
+      lastName:       vr.last_name       || null,
+      birthDate:      vr.birth_date      || null,
+      gender:         vr.gender          || null,
+      citizenship:    vr.citizenship     || null,
+      passportNum:    vr.passport_num    || null,
+      applicantEmail: vr.applicant_email || null,
+      applicantPhone: vr.applicant_phone || null,
     });
 
     // Считаем проверку в browser pool
@@ -411,14 +419,14 @@ process.on('unhandledRejection', (reason) => {
   logger.error('[worker] Unhandled Rejection: ' + (reason?.message || String(reason)));
 });
 
-process.on('SIGINT',  async () => { await closeBrowser().catch(() => {}); process.exit(0); });
-process.on('SIGTERM', async () => { await closeBrowser().catch(() => {}); process.exit(0); });
+process.on('SIGINT', () => {
+  logger.info('[worker] SIGINT received, shutting down...');
+  process.exit(0);
+});
 
-main().catch(async (e) => {
-  logger.error('[worker] Fatal: ' + e.message);
-  await writeCrash('Fatal start: ' + e.message);
-  await notifyError('Worker fatal: ' + e.message).catch(() => {});
-  process.exit(1);
+process.on('SIGTERM', () => {
+  logger.info('[worker] SIGTERM received, shutting down...');
+  process.exit(0);
 });
 
 module.exports = { main };

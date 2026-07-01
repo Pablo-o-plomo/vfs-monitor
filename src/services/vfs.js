@@ -164,8 +164,8 @@ async function checkSlots(params) {
       await randomDelay(1500, 2500);
     }
 
-    // ── 8. Заявитель (тестовые данные, если форма появилась) ──────────
-    await fillApplicantIfNeeded(page);
+    // ── 8. Заявитель (данные из заявки, если форма появилась) ────────
+    await fillApplicantIfNeeded(page, params);
 
     // ── 9. Ждём календарь ────────────────────────────────────────────
     logger.info('[vfs] Ждём календарь...');
@@ -237,30 +237,54 @@ async function selectDropdownByText(page, value, placeholderHint) {
   await randomDelay(400, 800);
 }
 
-async function fillApplicantIfNeeded(page) {
+async function fillApplicantIfNeeded(page, params = {}) {
   const firstNameInput = page
     .locator('input[formcontrolname="firstName"], input[name="firstName"]')
     .first();
   if (!(await firstNameInput.isVisible({ timeout: 3000 }).catch(() => false))) return;
 
-  logger.info('[vfs] Заполняем тестовые данные заявителя...');
-  await firstNameInput.fill('TEST');
+  const firstName = params.firstName || 'TEST';
+  const lastName  = params.lastName  || 'TESTOV';
+  const dob       = params.birthDate
+    ? (() => {
+        // Преобразуем YYYY-MM-DD → DD/MM/YYYY (формат VFS)
+        const [y, m, d] = String(params.birthDate).slice(0, 10).split('-');
+        return `${d}/${m}/${y}`;
+      })()
+    : '01/01/1990';
+
+  logger.info(`[vfs] Заполняем данные заявителя: ${firstName} ${lastName}, ${dob}`);
+
+  await firstNameInput.fill(firstName);
   await randomDelay(300, 600);
 
   const lastNameInput = page
     .locator('input[formcontrolname="lastName"], input[name="lastName"]')
     .first();
   if (await lastNameInput.isVisible().catch(() => false)) {
-    await lastNameInput.fill('TESTOV');
+    await lastNameInput.fill(lastName);
     await randomDelay(300, 600);
   }
 
   const dobInput = page
-    .locator('input[formcontrolname="dob"], input[placeholder*="ДД"]')
+    .locator('input[formcontrolname="dob"], input[placeholder*="ДД"], input[placeholder*="DD"]')
     .first();
   if (await dobInput.isVisible().catch(() => false)) {
-    await dobInput.fill('01/01/1990');
+    await dobInput.fill(dob);
     await randomDelay(300, 600);
+  }
+
+  // Пол
+  if (params.gender) {
+    const genderSel = page.locator('mat-select[formcontrolname="gender"], select[name="gender"]').first();
+    if (await genderSel.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await genderSel.click();
+      await randomDelay(300, 600);
+      const genderLabel = params.gender === 'M' ? 'Male' : 'Female';
+      const gOpt = page.locator(`mat-option:has-text("${genderLabel}"), option:has-text("${genderLabel}")`).first();
+      if (await gOpt.isVisible({ timeout: 2000 }).catch(() => false)) await gOpt.click();
+      await randomDelay(300, 600);
+    }
   }
 
   const saveBtn = page
@@ -362,13 +386,7 @@ function filterByDateRange(slots, dateFrom, dateTo) {
   });
 }
 
-// ─────────────────────────────────────────────
 // БАННЕР «БЛИЖАЙШИЙ ДОСТУПНЫЙ СЛОТ»
-// ─────────────────────────────────────────────
-// VFS показывает текст вида:
-//   "Ближайший доступный слот для 1 заявителя: 21.07.2026"
-// Ищем ПОСЛЕ выбора подкатегории, ДО нажатия «Продолжить»
-
 async function parseEarliestSlotBanner(page, dateFrom, dateTo) {
   try {
     const bodyText = await page.evaluate(
@@ -404,7 +422,6 @@ async function parseEarliestSlotBanner(page, dateFrom, dateTo) {
 
     logger.info(`[worker] Найден текст слота: "${matchedText}"`);
 
-    // DD.MM.YYYY → YYYY-MM-DD
     const [dd, mm, yyyy] = rawDate.split('.');
     if (!dd || !mm || !yyyy) {
       logger.warn(`[worker] Не удалось разобрать дату слота: ${rawDate}`);
